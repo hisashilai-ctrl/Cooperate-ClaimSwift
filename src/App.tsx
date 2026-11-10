@@ -2136,56 +2136,99 @@ export default function App() {
                     </p>
                   </div>
                 </div>
-                <button 
-                  type="button" 
-                  disabled={isAiScanning}
-                  onClick={() => formReceiptBase64 ? runGeminiOCR(formReceiptBase64) : fileInputRef.current?.click()} 
-                  className="text-xs bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold px-3.5 py-1.5 rounded-xl transition shadow-sm flex items-center gap-1.5"
-                >
-                  {isAiScanning ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-                  <span>{isAiScanning ? 'Reading...' : formReceiptBase64 ? 'Scan Image' : 'Pick & Scan'}</span>
-                </button>
+                {formReceiptBase64 ? (
+                  <button 
+                    type="button" 
+                    disabled={isAiScanning}
+                    onClick={() => runGeminiOCR(formReceiptBase64)} 
+                    className="text-xs bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold px-3.5 py-1.5 rounded-xl transition shadow-sm flex items-center gap-1.5 cursor-pointer"
+                  >
+                    {isAiScanning ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                    <span>{isAiScanning ? 'Reading...' : 'Scan Image'}</span>
+                  </button>
+                ) : (
+                  <label 
+                    htmlFor="galleryFileInput"
+                    className="text-xs bg-blue-600 hover:bg-blue-700 text-white font-bold px-3.5 py-1.5 rounded-xl transition shadow-sm flex items-center gap-1.5 cursor-pointer active:scale-95"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Pick & Scan</span>
+                  </label>
+                )}
               </div>
 
-              {/* Receipt Snapshot upload */}
+              {/* Receipt Snapshot upload with dual Photo Gallery vs Camera options */}
               <div>
-                <label className={`block text-xs font-bold ${darkMode ? 'text-slate-300' : 'text-slate-700'} mb-1`}>Receipt Snapshot / Photo</label>
-                <div className="flex items-center gap-3">
-                  <div className={`w-16 h-16 rounded-xl border border-dashed ${darkMode ? 'border-slate-700 bg-slate-950' : 'border-slate-300 bg-slate-50'} flex items-center justify-center overflow-hidden flex-shrink-0`}>
-                    {formReceiptBase64 ? (
-                      <img src={formReceiptBase64} alt="Preview" className="w-full h-full object-cover" />
-                    ) : (
-                      <Receipt className="w-6 h-6 text-slate-400" />
-                    )}
-                  </div>
-                  <div className="flex-1 flex gap-2">
-                    <input 
-                      type="file" 
-                      ref={fileInputRef}
-                      id="receiptFileInput" 
-                      accept="image/*" 
-                      onChange={handleFileChange} 
-                      className="hidden" 
-                    />
-                    <button 
-                      type="button" 
-                      onClick={() => fileInputRef.current?.click()} 
-                      className={`flex-1 py-2 px-3 border ${darkMode ? 'border-slate-700 hover:bg-slate-800 text-slate-300' : 'border-slate-300 hover:bg-slate-50 text-slate-700'} rounded-xl text-xs font-semibold flex items-center justify-center space-x-1.5`}
-                    >
-                      <Upload className="w-3.5 h-3.5" />
-                      <span>{formReceiptBase64 ? 'Change Receipt' : 'Upload Receipt Photo'}</span>
-                    </button>
+                <label className={`block text-xs font-bold ${darkMode ? 'text-slate-300' : 'text-slate-700'} mb-1`}>
+                  Receipt Snapshot / Photo (Pick from Phone Gallery or Camera)
+                </label>
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className={`w-16 h-16 rounded-xl border border-dashed ${darkMode ? 'border-slate-700 bg-slate-950' : 'border-slate-300 bg-slate-50'} flex items-center justify-center overflow-hidden flex-shrink-0`}>
+                      {formReceiptBase64 ? (
+                        <img src={formReceiptBase64} alt="Preview" className="w-full h-full object-cover" />
+                      ) : (
+                        <Receipt className="w-6 h-6 text-slate-400" />
+                      )}
+                    </div>
+
                     {formReceiptBase64 && (
                       <button
                         type="button"
                         onClick={() => setFormReceiptBase64(null)}
-                        className={`p-2 border ${darkMode ? 'border-slate-700 hover:bg-slate-800 text-slate-400 hover:text-red-400' : 'border-slate-300 hover:bg-slate-50 text-slate-400 hover:text-red-500'} rounded-xl`}
+                        className={`p-2.5 border ${darkMode ? 'border-slate-700 hover:bg-slate-800 text-slate-400 hover:text-red-400' : 'border-slate-300 hover:bg-slate-50 text-slate-400 hover:text-red-500'} rounded-xl transition sm:hidden`}
                         title="Remove attached receipt"
                       >
-                        <Trash2 className="w-4 h-4" />
+                        <Trash2 className="w-4 h-4 text-red-500" />
                       </button>
                     )}
                   </div>
+
+                  <div className="flex-1 grid grid-cols-2 gap-2">
+                    {/* Input 1: Dedicated Photo Gallery Picker */}
+                    <input 
+                      type="file" 
+                      id="galleryFileInput" 
+                      accept="image/*,image/png,image/jpeg,image/heic,image/heif" 
+                      onChange={handleFileChange} 
+                      className="hidden" 
+                    />
+                    <label 
+                      htmlFor="galleryFileInput" 
+                      className={`py-2 px-2.5 border ${darkMode ? 'border-slate-700 bg-slate-800/80 hover:bg-slate-700 text-slate-200' : 'border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-700'} rounded-xl text-xs font-bold flex items-center justify-center space-x-1.5 cursor-pointer shadow-sm transition active:scale-95`}
+                    >
+                      <Upload className="w-3.5 h-3.5 text-blue-500" />
+                      <span>📱 Photo Gallery</span>
+                    </label>
+
+                    {/* Input 2: Direct Camera Photo Snapper */}
+                    <input 
+                      type="file" 
+                      id="cameraFileInput" 
+                      accept="image/*" 
+                      capture="environment" 
+                      onChange={handleFileChange} 
+                      className="hidden" 
+                    />
+                    <label 
+                      htmlFor="cameraFileInput" 
+                      className={`py-2 px-2.5 border ${darkMode ? 'border-slate-700 bg-slate-800/80 hover:bg-slate-700 text-slate-200' : 'border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-700'} rounded-xl text-xs font-bold flex items-center justify-center space-x-1.5 cursor-pointer shadow-sm transition active:scale-95`}
+                    >
+                      <Sparkles className="w-3.5 h-3.5 text-emerald-500" />
+                      <span>📷 Camera</span>
+                    </label>
+                  </div>
+
+                  {formReceiptBase64 && (
+                    <button
+                      type="button"
+                      onClick={() => setFormReceiptBase64(null)}
+                      className={`p-2.5 border ${darkMode ? 'border-slate-700 hover:bg-slate-800 text-slate-400 hover:text-red-400' : 'border-slate-300 hover:bg-slate-50 text-slate-400 hover:text-red-500'} rounded-xl transition hidden sm:block`}
+                      title="Remove attached receipt"
+                    >
+                      <Trash2 className="w-4 h-4 text-red-500" />
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -2741,7 +2784,17 @@ export default function App() {
                 <p className="text-[10px] text-slate-400">On mobile: Tap 'Save to Gallery' or long-press image to save to Photos.</p>
               </div>
               
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <a
+                  href={receiptViewerUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold transition flex items-center gap-1 border border-slate-700"
+                  title="Open full image in new tab to save to Photos"
+                >
+                  <Eye className="w-3.5 h-3.5 text-blue-400" />
+                  <span>Open Tab ↗</span>
+                </a>
                 <button
                   type="button"
                   onClick={() => downloadReceipt({ receipt: receiptViewerUrl })}
@@ -2753,15 +2806,22 @@ export default function App() {
                 </button>
                 <button 
                   onClick={() => setReceiptViewerUrl(null)} 
-                  className="bg-slate-800 hover:bg-slate-700 text-slate-300 p-1.5 rounded-full transition"
+                  className="bg-slate-800 hover:bg-slate-700 text-slate-300 p-1.5 rounded-full transition ml-1"
                   title="Close viewer"
                 >
                   <X className="w-4 h-4" />
                 </button>
               </div>
             </div>
-            <div className="p-2 sm:p-4 flex-1 flex items-center justify-center bg-slate-950/60 rounded-xl overflow-auto">
-              <img src={receiptViewerUrl} alt="Full Receipt" className="max-w-full max-h-[70vh] object-contain mx-auto rounded-lg shadow-lg" />
+            <div className="p-2 sm:p-4 flex-1 flex flex-col items-center justify-center bg-slate-950/60 rounded-xl overflow-auto gap-2">
+              <img 
+                src={receiptViewerUrl} 
+                alt="Full Receipt" 
+                className="max-w-full max-h-[65vh] object-contain mx-auto rounded-lg shadow-lg select-none" 
+              />
+              <p className="text-[11px] font-semibold text-emerald-400 bg-emerald-950/80 border border-emerald-800/80 px-3 py-1 rounded-full text-center shadow-sm">
+                📱 iPhone / Android Tip: Press &amp; hold the receipt image for 1 second &rarr; tap 'Save to Photos'
+              </p>
             </div>
           </div>
         </div>
