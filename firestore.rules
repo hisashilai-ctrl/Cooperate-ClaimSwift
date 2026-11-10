@@ -1,0 +1,35 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Default deny all unhandled paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // App Claims, Profiles & Categories
+    match /artifacts/{appId} {
+      allow read: if isSignedIn();
+
+      match /claims/{claimId} {
+        allow read, write: if isSignedIn();
+      }
+
+      match /profiles/{profileId} {
+        allow read, write: if isSignedIn();
+      }
+
+      match /categories/{categoryId} {
+        allow read, write: if isSignedIn();
+      }
+    }
+  }
+}

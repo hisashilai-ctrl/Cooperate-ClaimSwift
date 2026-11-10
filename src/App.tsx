@@ -19,8 +19,10 @@ import {
   updateDoc, 
   deleteDoc, 
   doc,
+  getDocFromServer,
   type Firestore
 } from 'firebase/firestore';
+import firebaseConfig from '../firebase-applet-config.json';
 import { 
   Receipt, 
   Plus, 
@@ -58,7 +60,8 @@ import {
   ChevronUp,
   AlertTriangle,
   Layers,
-  ArrowUpDown
+  ArrowUpDown,
+  Images
 } from 'lucide-react';
 
 // TypeScript Types
@@ -432,6 +435,55 @@ export default function App() {
   // Reset sample data confirmation state
   const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
 
+  // Dedicated Receipt Gallery Modal state
+  const [isReceiptGalleryOpen, setIsReceiptGalleryOpen] = useState(false);
+  const [galleryFilterWorkspace, setGalleryFilterWorkspace] = useState<'CURRENT' | 'ALL'>('CURRENT');
+  const [receiptToDeleteClaim, setReceiptToDeleteClaim] = useState<Claim | null>(null);
+
+  // Remove receipt attachment from claim handler
+  const handleConfirmRemoveReceipt = async () => {
+    if (!receiptToDeleteClaim) return;
+    const targetId = receiptToDeleteClaim.id;
+
+    if (storageMode === 'cloud' && dbInstance && user) {
+      try {
+        const appId = window.__app_id || 'claimswift-app';
+        const claimDocRef = doc(dbInstance, 'artifacts', appId, 'claims', targetId);
+        await updateDoc(claimDocRef, { receipt: null, updatedAt: new Date().toISOString() });
+      } catch (err) {
+        console.warn("Cloud remove receipt failed, updating locally:", err);
+      }
+    }
+
+    const updated = claims.map(c => c.id === targetId ? { ...c, receipt: null, updatedAt: new Date().toISOString() } : c);
+    setClaims(updated);
+    saveLocalClaims(updated);
+    showToast(`Removed receipt attachment from "${receiptToDeleteClaim.title || 'Claim'}"`, 'info');
+    setReceiptToDeleteClaim(null);
+  };
+
+  // Receipt calculations for gallery
+  const activeWorkspaceReceiptsCount = useMemo(() => {
+    return claims.filter(c => (c.profile ? c.profile === activeProfile : activeProfile === 'Andrew (Self)') && c.receipt).length;
+  }, [claims, activeProfile]);
+
+  const totalReceiptsCount = useMemo(() => {
+    return claims.filter(c => c.receipt).length;
+  }, [claims]);
+
+  const galleryClaims = useMemo(() => {
+    return claims.filter(c => {
+      if (!c.receipt) return false;
+      if (galleryFilterWorkspace === 'CURRENT') {
+        return c.profile ? c.profile === activeProfile : activeProfile === 'Andrew (Self)';
+      }
+      return true;
+    }).sort((a, b) => {
+      const getTime = (val: any) => val ? new Date(val).getTime() || 0 : 0;
+      return getTime(b.date) - getTime(a.date);
+    });
+  }, [claims, activeProfile, galleryFilterWorkspace]);
+
   // Delete confirm modal for claims
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
@@ -476,20 +528,20 @@ export default function App() {
   // Initial Authentication & Firebase Check
   useEffect(() => {
     const initFirebase = async () => {
-      let customConfig: Record<string, string> | null = null;
+      let configToUse: any = firebaseConfig;
       if (typeof window !== 'undefined' && window.__firebase_config) {
         try {
-          customConfig = JSON.parse(window.__firebase_config);
+          configToUse = JSON.parse(window.__firebase_config);
         } catch (e) {
           console.warn("Could not parse __firebase_config:", e);
         }
       }
 
-      if (customConfig && customConfig.apiKey && customConfig.apiKey !== 'demo-api-key') {
+      if (configToUse && configToUse.apiKey && configToUse.apiKey !== 'demo-api-key') {
         try {
-          const app = getApps().length > 0 ? getApps()[0] : initializeApp(customConfig);
+          const app = getApps().length > 0 ? getApps()[0] : initializeApp(configToUse);
           const auth = getAuth(app);
-          const db = getFirestore(app);
+          const db = getFirestore(app, configToUse.firestoreDatabaseId);
 
           setFirebaseApp(app);
           setAuthInstance(auth);
@@ -532,9 +584,31 @@ export default function App() {
             (error) => {
               console.warn("Firestore snapshot error, staying on local store:", error);
               setLoadingClaims(false);
-              setStorageMode('local');
             }
           );
+
+          // Real-time snapshot sync for workspace profiles
+          const profilesColRef = collection(db, 'artifacts', appId, 'profiles');
+          onSnapshot(profilesColRef, (snapshot) => {
+            if (!snapshot.empty) {
+              const fetchedProfiles = snapshot.docs.map(d => d.data().name as string).filter(Boolean);
+              if (fetchedProfiles.length > 0) {
+                setProfiles(fetchedProfiles);
+              }
+            }
+          });
+
+          // Real-time snapshot sync for categories
+          const categoriesColRef = collection(db, 'artifacts', appId, 'categories');
+          onSnapshot(categoriesColRef, (snapshot) => {
+            if (!snapshot.empty) {
+              const fetchedCats = snapshot.docs.map(d => d.data().name as string).filter(Boolean);
+              if (fetchedCats.length > 0) {
+                setCategories(fetchedCats);
+              }
+            }
+          });
+
           return;
         } catch (err) {
           console.warn("Firebase initialization failed, falling back gracefully to LocalStorage mode:", err);
@@ -1254,6 +1328,20 @@ export default function App() {
             >
               <Tag className="w-3.5 h-3.5 text-indigo-500" />
               <span>Manage Categories</span>
+            </button>
+
+            <button
+              onClick={() => setIsReceiptGalleryOpen(true)}
+              className={`text-xs px-2.5 py-1.5 rounded-xl border transition flex items-center gap-1.5 font-semibold ${
+                darkMode ? 'bg-emerald-950/60 border-emerald-700/60 text-emerald-300 hover:bg-emerald-900/60' : 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100'
+              }`}
+              title="Open Receipt Gallery to view or delete receipt attachments"
+            >
+              <Images className="w-3.5 h-3.5 text-emerald-500" />
+              <span>Receipt Gallery</span>
+              <span className="text-[10px] font-black bg-emerald-600 text-white px-1.5 py-0.2 rounded-full">
+                {activeWorkspaceReceiptsCount}
+              </span>
             </button>
           </div>
 
@@ -2580,7 +2668,7 @@ export default function App() {
       {/* FULL RECEIPT VIEWER MODAL */}
       {receiptViewerUrl && (
         <div 
-          className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[60] flex items-center justify-center p-4 print:hidden" 
+          className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[70] flex items-center justify-center p-4 print:hidden" 
           onClick={() => setReceiptViewerUrl(null)}
         >
           <div className="relative max-w-3xl max-h-[90vh] bg-slate-900 rounded-2xl overflow-hidden p-2 shadow-2xl border border-slate-800" onClick={(e) => e.stopPropagation()}>
@@ -2598,6 +2686,213 @@ export default function App() {
             </div>
             <div className="p-4 flex items-center justify-center bg-slate-950/50 rounded-xl">
               <img src={receiptViewerUrl} alt="Full Receipt" className="max-w-full max-h-[75vh] object-contain mx-auto rounded-lg shadow-lg" />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DEDICATED RECEIPT GALLERY MODAL */}
+      {isReceiptGalleryOpen && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center p-3 sm:p-5 print:hidden">
+          <div className={`${darkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-800'} rounded-3xl max-w-4xl w-full max-h-[90vh] flex flex-col p-4 sm:p-6 shadow-2xl border`}>
+            {/* Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 mb-4 border-b border-slate-200 dark:border-slate-800 gap-3">
+              <div>
+                <div className="flex items-center space-x-2">
+                  <Images className="w-5 h-5 text-emerald-500" />
+                  <h3 className={`text-base font-bold ${darkMode ? 'text-white' : 'text-slate-900'}`}>Receipt Gallery</h3>
+                  <span className="text-xs font-black bg-emerald-600 text-white px-2 py-0.5 rounded-full">
+                    {galleryClaims.length} Attachment{galleryClaims.length === 1 ? '' : 's'}
+                  </span>
+                </div>
+                <p className={`text-xs ${darkMode ? 'text-slate-400' : 'text-slate-500'} mt-0.5`}>
+                  View full receipt images or remove attachments directly across your logged claims.
+                </p>
+              </div>
+
+              {/* Workspace Filter Tabs & Close Button */}
+              <div className="flex items-center gap-2">
+                <div className={`flex items-center p-1 rounded-xl border ${darkMode ? 'bg-slate-950 border-slate-800' : 'bg-slate-100 border-slate-200'}`}>
+                  <button
+                    onClick={() => setGalleryFilterWorkspace('CURRENT')}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition ${
+                      galleryFilterWorkspace === 'CURRENT'
+                        ? 'bg-emerald-600 text-white shadow-sm'
+                        : darkMode ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Active Workspace ({activeWorkspaceReceiptsCount})
+                  </button>
+                  <button
+                    onClick={() => setGalleryFilterWorkspace('ALL')}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition ${
+                      galleryFilterWorkspace === 'ALL'
+                        ? 'bg-emerald-600 text-white shadow-sm'
+                        : darkMode ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    All Workspaces ({totalReceiptsCount})
+                  </button>
+                </div>
+
+                <button 
+                  onClick={() => setIsReceiptGalleryOpen(false)} 
+                  className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-xl hover:bg-slate-800/50 transition"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Gallery Grid */}
+            <div className="overflow-y-auto flex-1 pr-1 my-1">
+              {galleryClaims.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 text-center">
+                  <div className={`w-16 h-16 rounded-2xl ${darkMode ? 'bg-slate-800 text-slate-500' : 'bg-slate-100 text-slate-400'} flex items-center justify-center mb-3`}>
+                    <Receipt className="w-8 h-8 opacity-60" />
+                  </div>
+                  <h4 className={`text-sm font-bold ${darkMode ? 'text-slate-300' : 'text-slate-700'} mb-1`}>No Receipt Attachments Found</h4>
+                  <p className={`text-xs ${darkMode ? 'text-slate-400' : 'text-slate-500'} max-w-sm`}>
+                    {galleryFilterWorkspace === 'CURRENT'
+                      ? `No claims in "${activeProfile}" currently have receipt photos attached.`
+                      : 'No claims in any workspace currently have receipt photos attached.'}
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 xs:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3.5">
+                  {galleryClaims.map(item => {
+                    const statusBg = item.status === 'PAID'
+                      ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
+                      : item.status === 'SUBMITTED'
+                        ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20'
+                        : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20';
+
+                    const statusLabel = item.status === 'PAID' ? 'Paid' : item.status === 'SUBMITTED' ? 'Submitted' : 'Unsubmitted';
+
+                    return (
+                      <div 
+                        key={item.id} 
+                        className={`group relative rounded-2xl border overflow-hidden transition-all flex flex-col ${
+                          darkMode ? 'bg-slate-800/60 border-slate-750 hover:border-slate-650' : 'bg-slate-50 border-slate-200 hover:border-slate-300'
+                        }`}
+                      >
+                        {/* Image Preview Thumbnail */}
+                        <div className="relative h-44 w-full bg-slate-950 flex items-center justify-center overflow-hidden cursor-pointer">
+                          <img 
+                            src={item.receipt!} 
+                            alt={item.title} 
+                            onClick={() => setReceiptViewerUrl(item.receipt!)}
+                            className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                          />
+                          
+                          {/* Top floating badges */}
+                          <div className="absolute top-2 left-2 right-2 flex items-center justify-between gap-1 pointer-events-none">
+                            <span className={`text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-md border backdrop-blur-md ${statusBg}`}>
+                              {statusLabel}
+                            </span>
+                            <span className="text-[10px] font-extrabold bg-slate-900/80 text-white px-2 py-0.5 rounded-md backdrop-blur-md">
+                              {formatMoney(item.amount)}
+                            </span>
+                          </div>
+
+                          {/* Hover action overlay */}
+                          <div className="absolute inset-0 bg-slate-950/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 p-2">
+                            <button
+                              type="button"
+                              onClick={() => setReceiptViewerUrl(item.receipt!)}
+                              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1 shadow-lg"
+                              title="View full receipt"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                              <span>View</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setReceiptToDeleteClaim(item)}
+                              className="p-1.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold transition shadow-lg"
+                              title="Delete receipt attachment"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Card Info */}
+                        <div className="p-3 flex flex-col justify-between flex-1 gap-2">
+                          <div>
+                            <div className="flex items-center justify-between text-[10px] text-slate-400 mb-0.5">
+                              <span className="truncate">{item.merchant || 'Vendor'}</span>
+                              <span>{item.date}</span>
+                            </div>
+                            <h4 className={`text-xs font-bold line-clamp-1 ${darkMode ? 'text-white' : 'text-slate-900'}`} title={item.title}>
+                              {item.title}
+                            </h4>
+                          </div>
+
+                          <div className="flex items-center justify-between gap-1 pt-2 border-t border-slate-200 dark:border-slate-750/60 text-[10px]">
+                            <span className={`px-2 py-0.5 rounded-md font-semibold truncate ${darkMode ? 'bg-slate-700/60 text-slate-300' : 'bg-slate-200/80 text-slate-700'}`}>
+                              {item.category}
+                            </span>
+                            {galleryFilterWorkspace === 'ALL' && (
+                              <span className="text-[9px] font-bold text-blue-400 truncate max-w-[80px]">
+                                {item.profile}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Gallery Footer */}
+            <div className={`pt-3 mt-2 flex items-center justify-between border-t ${darkMode ? 'border-slate-800' : 'border-slate-200'}`}>
+              <span className={`text-xs ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                Showing {galleryClaims.length} receipt proof{galleryClaims.length === 1 ? '' : 's'}
+              </span>
+              <button 
+                type="button" 
+                onClick={() => setIsReceiptGalleryOpen(false)} 
+                className="px-4 py-2 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-xl transition shadow-md"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CONFIRM REMOVE RECEIPT ATTACHMENT MODAL */}
+      {receiptToDeleteClaim && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[70] flex items-center justify-center p-4 print:hidden">
+          <div className={`${darkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-800'} rounded-3xl max-w-sm w-full p-6 shadow-2xl border`}>
+            <div className="flex items-center gap-3 mb-3 text-red-500">
+              <AlertTriangle className="w-6 h-6" />
+              <h3 className={`text-base font-bold ${darkMode ? 'text-white' : 'text-slate-900'}`}>Remove Receipt Photo?</h3>
+            </div>
+            <p className={`text-xs ${darkMode ? 'text-slate-300' : 'text-slate-600'} mb-2`}>
+              Are you sure you want to remove the receipt attachment from <strong className="font-bold text-red-400">"{receiptToDeleteClaim.title}"</strong>?
+            </p>
+            <p className={`text-[11px] ${darkMode ? 'text-slate-400' : 'text-slate-500'} mb-5`}>
+              The expense claim record details will be kept, but the attached image will be deleted.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setReceiptToDeleteClaim(null)}
+                className={`px-3.5 py-1.5 text-xs font-semibold ${darkMode ? 'text-slate-400 hover:bg-slate-800' : 'text-slate-500 hover:bg-slate-100'} rounded-xl transition`}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmRemoveReceipt}
+                className="px-4 py-1.5 text-xs font-bold bg-red-600 hover:bg-red-700 text-white rounded-xl transition shadow-sm"
+              >
+                Remove Receipt
+              </button>
             </div>
           </div>
         </div>

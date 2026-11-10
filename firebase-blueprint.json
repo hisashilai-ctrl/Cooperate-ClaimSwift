@@ -1,0 +1,61 @@
+{
+  "entities": {
+    "Claim": {
+      "title": "Expense Claim",
+      "description": "Represents an individual corporate expense claim record logged by a user.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique claim identifier" },
+        "profile": { "type": "string", "maxLength": 100, "description": "Workspace profile name associated with this claim" },
+        "title": { "type": "string", "maxLength": 200, "description": "Expense title or purpose" },
+        "merchant": { "type": "string", "maxLength": 200, "description": "Merchant or vendor name" },
+        "date": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$", "description": "ISO date format YYYY-MM-DD" },
+        "category": { "type": "string", "maxLength": 100, "description": "Expense category" },
+        "amount": { "type": "number", "description": "Expense monetary amount in RM" },
+        "status": { "type": "string", "enum": ["UNSUBMITTED", "SUBMITTED", "PAID"], "description": "Claim status" },
+        "notes": { "type": "string", "maxLength": 1000, "description": "Project remarks or notes" },
+        "receipt": { "type": "string", "description": "Base64 encoded receipt image or SVG data URL" },
+        "createdAt": { "type": "string", "description": "Timestamp when claim was created" },
+        "updatedAt": { "type": "string", "description": "Timestamp when claim was last updated" },
+        "userId": { "type": "string", "maxLength": 128, "description": "User UID of the creator" }
+      },
+      "required": ["profile", "title", "merchant", "date", "category", "amount", "status"]
+    },
+    "WorkspaceProfile": {
+      "title": "Workspace Profile",
+      "description": "Represents a custom workspace profile for grouping claims.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "maxLength": 100, "description": "Workspace name" },
+        "userId": { "type": "string", "maxLength": 128, "description": "User UID of the profile owner" },
+        "createdAt": { "type": "string", "description": "Creation timestamp" }
+      },
+      "required": ["name"]
+    },
+    "Category": {
+      "title": "Expense Category",
+      "description": "Represents a custom expense category.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "maxLength": 100, "description": "Category name" },
+        "userId": { "type": "string", "maxLength": 128, "description": "User UID of the category owner" },
+        "createdAt": { "type": "string", "description": "Creation timestamp" }
+      },
+      "required": ["name"]
+    }
+  },
+  "firestore": {
+    "/artifacts/{appId}/claims/{claimId}": {
+      "schema": { "$ref": "#/entities/Claim" },
+      "description": "Global or user-specific expense claim records"
+    },
+    "/artifacts/{appId}/profiles/{profileId}": {
+      "schema": { "$ref": "#/entities/WorkspaceProfile" },
+      "description": "User workspace profiles"
+    },
+    "/artifacts/{appId}/categories/{categoryId}": {
+      "schema": { "$ref": "#/entities/Category" },
+      "description": "User expense categories"
+    }
+  }
+}
