@@ -902,18 +902,79 @@ export default function App() {
     return `${currency} ${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
 
-  // Direct download receipt image back to Phone / PC
-  const downloadReceipt = (item: Claim) => {
+  // Robust download/save receipt image function (supports Mobile Photo Gallery & PC)
+  const downloadReceipt = async (item: Claim | { title?: string; merchant?: string; date?: string; receipt: string }) => {
     if (!item.receipt) return;
-    const link = document.createElement('a');
-    link.href = item.receipt;
-    const cleanMerchant = (item.merchant || 'Claim').replace(/[^a-zA-Z0-9]/g, '_');
-    const cleanDate = item.date || 'Receipt';
-    link.download = `Receipt_${cleanMerchant}_${cleanDate}.png`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    showToast("Downloaded receipt image", 'success');
+
+    try {
+      const cleanMerchant = (item.merchant || 'Claim').replace(/[^a-zA-Z0-9]/g, '_');
+      const cleanDate = item.date || 'Receipt';
+      const fileName = `Receipt_${cleanMerchant}_${cleanDate}.png`;
+
+      let blob: Blob;
+
+      if (item.receipt.startsWith('data:image/svg+xml')) {
+        // Render SVG to Canvas -> true PNG Blob for native phone photo gallery compatibility
+        const img = new Image();
+        const canvas = document.createElement('canvas');
+        canvas.width = 600;
+        canvas.height = 840;
+        const ctx = canvas.getContext('2d');
+
+        await new Promise((resolve, reject) => {
+          img.onload = () => {
+            if (ctx) {
+              ctx.fillStyle = '#ffffff';
+              ctx.fillRect(0, 0, canvas.width, canvas.height);
+              ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            }
+            resolve(true);
+          };
+          img.onerror = reject;
+          img.src = item.receipt!;
+        });
+
+        blob = await new Promise<Blob>((resolve) => {
+          canvas.toBlob((b) => resolve(b || new Blob([item.receipt || ''], { type: 'image/png' })), 'image/png');
+        });
+      } else {
+        const res = await fetch(item.receipt);
+        blob = await res.blob();
+      }
+
+      const file = new File([blob], fileName, { type: 'image/png' });
+
+      // If mobile native share API supports file sharing, open native "Save Image" / Photo Gallery action sheet
+      if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({
+            files: [file],
+            title: fileName,
+            text: `Receipt proof for ${item.merchant || 'Expense'}`
+          });
+          showToast("Saved to Phone Gallery / Photos", 'success');
+          return;
+        } catch (shareErr) {
+          // User dismissed or share action cancelled, fall back to link click
+        }
+      }
+
+      // Standard Object URL download fallback for desktop & Android browsers
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+
+      showToast("Downloaded receipt image to device", 'success');
+    } catch (err) {
+      console.warn("Could not download receipt directly, opening viewer fallback:", err);
+      setReceiptViewerUrl(item.receipt);
+      showToast("Opened receipt preview - long press image to Save to Photos", 'info');
+    }
   };
 
   // Excel / CSV Export Feature
@@ -1203,14 +1264,14 @@ export default function App() {
 
   return (
     <div className={`min-h-screen ${darkMode ? 'dark bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-800'} transition-colors duration-200 font-sans`}>
-      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-3 sm:py-6 pb-24 sm:pb-8 pr-4 sm:pr-8">
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 pt-5 sm:pt-6 pb-24 sm:pb-8 safe-padding-top">
         
         {/* HEADER & GLOBAL CONTROLS */}
-        <header className={`flex items-center justify-between pb-4 mb-4 border-b ${darkMode ? 'border-slate-800' : 'border-slate-200'} gap-2 print:hidden`}>
-          {/* App Identity (Logo removed, shifted clean to left) */}
-          <div className="flex flex-col">
-            <div className="flex items-center space-x-2">
-              <h1 className={`text-lg sm:text-2xl font-black tracking-tight ${darkMode ? 'text-white' : 'text-slate-900'}`}>
+        <header className={`flex items-center justify-between pb-3.5 mb-4 border-b ${darkMode ? 'border-slate-800' : 'border-slate-200'} gap-2 print:hidden`}>
+          {/* App Identity */}
+          <div className="flex flex-col flex-shrink-0">
+            <div className="flex items-center space-x-1.5 sm:space-x-2">
+              <h1 className={`text-base sm:text-2xl font-black tracking-tight ${darkMode ? 'text-white' : 'text-slate-900'}`}>
                 ClaimSwift
               </h1>
               <span className={`text-[9px] sm:text-[10px] font-extrabold uppercase px-1.5 sm:px-2 py-0.5 rounded flex items-center gap-1 ${
@@ -2103,7 +2164,6 @@ export default function App() {
                       ref={fileInputRef}
                       id="receiptFileInput" 
                       accept="image/*" 
-                      capture="environment" 
                       onChange={handleFileChange} 
                       className="hidden" 
                     />
@@ -2668,24 +2728,40 @@ export default function App() {
       {/* FULL RECEIPT VIEWER MODAL */}
       {receiptViewerUrl && (
         <div 
-          className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[70] flex items-center justify-center p-4 print:hidden" 
+          className="fixed inset-0 bg-slate-950/85 backdrop-blur-md z-[70] flex items-center justify-center p-3 sm:p-4 print:hidden" 
           onClick={() => setReceiptViewerUrl(null)}
         >
-          <div className="relative max-w-3xl max-h-[90vh] bg-slate-900 rounded-2xl overflow-hidden p-2 shadow-2xl border border-slate-800" onClick={(e) => e.stopPropagation()}>
-            <div className="flex justify-between items-center p-3 border-b border-slate-800">
-              <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
-                <Receipt className="w-4 h-4 text-blue-400" />
-                Receipt Proof Viewer
-              </span>
-              <button 
-                onClick={() => setReceiptViewerUrl(null)} 
-                className="bg-slate-800 hover:bg-slate-700 text-white p-1.5 rounded-full shadow-lg transition"
-              >
-                <X className="w-4 h-4" />
-              </button>
+          <div className="relative max-w-3xl w-full max-h-[90vh] bg-slate-900 rounded-2xl overflow-hidden p-3 shadow-2xl border border-slate-800 flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-center pb-3 mb-2 border-b border-slate-800 gap-2">
+              <div>
+                <span className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                  <Receipt className="w-4 h-4 text-blue-400" />
+                  Receipt Proof Viewer
+                </span>
+                <p className="text-[10px] text-slate-400">On mobile: Tap 'Save to Gallery' or long-press image to save to Photos.</p>
+              </div>
+              
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => downloadReceipt({ receipt: receiptViewerUrl })}
+                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-md"
+                  title="Download or save photo to Phone Gallery"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Save to Gallery</span>
+                </button>
+                <button 
+                  onClick={() => setReceiptViewerUrl(null)} 
+                  className="bg-slate-800 hover:bg-slate-700 text-slate-300 p-1.5 rounded-full transition"
+                  title="Close viewer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             </div>
-            <div className="p-4 flex items-center justify-center bg-slate-950/50 rounded-xl">
-              <img src={receiptViewerUrl} alt="Full Receipt" className="max-w-full max-h-[75vh] object-contain mx-auto rounded-lg shadow-lg" />
+            <div className="p-2 sm:p-4 flex-1 flex items-center justify-center bg-slate-950/60 rounded-xl overflow-auto">
+              <img src={receiptViewerUrl} alt="Full Receipt" className="max-w-full max-h-[70vh] object-contain mx-auto rounded-lg shadow-lg" />
             </div>
           </div>
         </div>
