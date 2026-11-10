@@ -27,7 +27,6 @@ import {
   Moon, 
   Sun, 
   Search, 
-  Printer, 
   AlertCircle, 
   Clock, 
   CheckCircle2, 
@@ -39,8 +38,8 @@ import {
   RefreshCw, 
   User, 
   Users, 
-  LogOut, 
-  LogIn, 
+  LogOut,
+  LogIn,
   Sparkles, 
   Store, 
   Calendar, 
@@ -173,6 +172,32 @@ const INITIAL_SEED_CLAIMS: Claim[] = [
     notes: 'Replacement cables for meeting room projector',
     receipt: null,
     createdAt: '2026-10-25T11:45:00.000Z'
+  },
+  {
+    id: 'seed-6',
+    profile: 'Andrew (Self)',
+    title: 'Office Stationery & Whiteboard Markers',
+    merchant: 'Popular Bookstore',
+    date: '2026-10-08',
+    category: 'Office Supplies',
+    amount: 48.00,
+    status: 'PAID',
+    notes: 'Sprint room workshop supplies',
+    receipt: null,
+    createdAt: '2026-10-08T14:00:00.000Z'
+  },
+  {
+    id: 'seed-7',
+    profile: 'Andrew (Self)',
+    title: 'Client Lunch Catchup & Strategy',
+    merchant: 'The Social Restaurant',
+    date: '2026-09-25',
+    category: 'Client Meals',
+    amount: 96.50,
+    status: 'UNSUBMITTED',
+    notes: 'Quarterly review with strategic distribution partner',
+    receipt: null,
+    createdAt: '2026-09-25T13:15:00.000Z'
   }
 ];
 
@@ -181,7 +206,16 @@ const loadLocalClaims = (): Claim[] => {
     const raw = localStorage.getItem('claimswift_claims');
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const existingIds = new Set(parsed.map((c: any) => c.id));
+        const missingSeeds = INITIAL_SEED_CLAIMS.filter(s => !existingIds.has(s.id));
+        if (missingSeeds.length > 0) {
+          const merged = [...parsed, ...missingSeeds];
+          saveLocalClaims(merged);
+          return merged;
+        }
+        return parsed;
+      }
     }
   } catch (e) {
     console.warn("Could not read local claims", e);
@@ -210,6 +244,27 @@ const loadLocalProfiles = (): string[] => {
   return ['Andrew (Self)', 'Alex (Friend/Colleague)'];
 };
 
+const loadLocalCategories = (): string[] => {
+  try {
+    const raw = localStorage.getItem('claimswift_categories');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch (e) {
+    console.warn("Could not read local categories", e);
+  }
+  return ['Client Meals', 'Travel / Taxi', 'Office Supplies', 'Software / Tech', 'Entertainment', 'Hotel / Lodging', 'Other'];
+};
+
+const saveLocalCategories = (cats: string[]) => {
+  try {
+    localStorage.setItem('claimswift_categories', JSON.stringify(cats));
+  } catch (e) {
+    console.warn("Could not save categories", e);
+  }
+};
+
 export default function App() {
   // Mode flag: 'cloud' | 'local'
   const [storageMode, setStorageMode] = useState<'cloud' | 'local'>('local');
@@ -219,14 +274,8 @@ export default function App() {
   const [authInstance, setAuthInstance] = useState<Auth | null>(null);
   const [dbInstance, setDbInstance] = useState<Firestore | null>(null);
 
-  // User state
-  const [user, setUser] = useState<UserProfile | null>({
-    uid: 'local-user-andrew',
-    displayName: 'Andrew Lai',
-    email: 'andrew.corporate@company.com',
-    photoURL: null,
-    isAnonymous: false
-  });
+  // User state (Google Profile - null by default until user clicks Google Login)
+  const [user, setUser] = useState<UserProfile | null>(null);
 
   // App Profile/Account Workspace state
   const [profiles, setProfiles] = useState<string[]>(loadLocalProfiles);
@@ -236,8 +285,8 @@ export default function App() {
   const [claims, setClaims] = useState<Claim[]>(loadLocalClaims);
   const [loadingClaims, setLoadingClaims] = useState(false);
 
-  // UI state
-  const [currency, setCurrency] = useState<'RM' | '$' | '€' | '£' | 'S$'>('RM');
+  // Currency: Standardized to Ringgit Malaysia (RM) across entire app
+  const currency = 'RM';
   const [darkMode, setDarkMode] = useState<boolean>(() => {
     try {
       const saved = localStorage.getItem('claimswift_darkmode');
@@ -254,6 +303,7 @@ export default function App() {
   const [statusFilter, setStatusFilter] = useState<'ALL' | ClaimStatus>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const [showCharts, setShowCharts] = useState(true);
+  const [showAllListings, setShowAllListings] = useState<boolean>(false);
 
   // Toast feedback state
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'info' | 'error' } | null>(null);
@@ -273,8 +323,116 @@ export default function App() {
   // Add profile modal
   const [isAddProfileModalOpen, setIsAddProfileModalOpen] = useState(false);
   const [newProfileName, setNewProfileName] = useState('');
+  const [profileToDelete, setProfileToDelete] = useState<string | null>(null);
+  const [editingProfile, setEditingProfile] = useState<{ oldName: string; newName: string } | null>(null);
 
-  // Delete confirm modal
+  const handleSaveEditProfile = (oldName: string) => {
+    if (!editingProfile || !editingProfile.newName.trim()) return;
+    const trimmed = editingProfile.newName.trim();
+    if (profiles.includes(trimmed) && trimmed !== oldName) {
+      showToast("Workspace name already exists", 'error');
+      return;
+    }
+    const updatedProfiles = profiles.map(p => p === oldName ? trimmed : p);
+    setProfiles(updatedProfiles);
+    try {
+      localStorage.setItem('claimswift_profiles', JSON.stringify(updatedProfiles));
+    } catch (e) {
+      console.warn("Could not save profiles", e);
+    }
+
+    // Update profile names in claims
+    const updatedClaims = claims.map(c => c.profile === oldName ? { ...c, profile: trimmed } : c);
+    setClaims(updatedClaims);
+    saveLocalClaims(updatedClaims);
+
+    if (activeProfile === oldName) {
+      setActiveProfile(trimmed);
+    }
+
+    setEditingProfile(null);
+    showToast(`Renamed workspace to: ${trimmed}`, 'success');
+  };
+
+  // Manage Categories modal & state
+  const [isManageCategoriesOpen, setIsManageCategoriesOpen] = useState(false);
+  const [categories, setCategories] = useState<string[]>(loadLocalCategories);
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [editingCategory, setEditingCategory] = useState<{ oldName: string; newName: string } | null>(null);
+
+  const handleAddCategory = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = newCategoryName.trim();
+    if (!trimmed) return;
+    if (categories.includes(trimmed)) {
+      showToast("Category already exists", 'error');
+      return;
+    }
+    const updated = [...categories, trimmed];
+    setCategories(updated);
+    saveLocalCategories(updated);
+    setNewCategoryName('');
+    showToast(`Added category: ${trimmed}`, 'success');
+  };
+
+  const handleSaveEditCategory = (oldName: string) => {
+    if (!editingCategory || !editingCategory.newName.trim()) return;
+    const trimmed = editingCategory.newName.trim();
+    if (categories.includes(trimmed) && trimmed !== oldName) {
+      showToast("Category name already exists", 'error');
+      return;
+    }
+    const updatedCategories = categories.map(c => c === oldName ? trimmed : c);
+    setCategories(updatedCategories);
+    saveLocalCategories(updatedCategories);
+
+    // Update category name across all existing claims
+    const updatedClaims = claims.map(c => c.category === oldName ? { ...c, category: trimmed } : c);
+    setClaims(updatedClaims);
+    saveLocalClaims(updatedClaims);
+
+    if (formCategory === oldName) setFormCategory(trimmed);
+    if (selectedCategory === oldName) setSelectedCategory(trimmed);
+
+    setEditingCategory(null);
+    showToast(`Renamed category to: ${trimmed}`, 'success');
+  };
+
+  // Category delete confirmation modal state
+  const [categoryToDelete, setCategoryToDelete] = useState<string | null>(null);
+
+  const handlePromptDeleteCategory = (catName: string) => {
+    if (categories.length <= 1) {
+      showToast("You must keep at least one category", 'error');
+      return;
+    }
+    setCategoryToDelete(catName);
+  };
+
+  const handleConfirmDeleteCategory = () => {
+    if (!categoryToDelete) return;
+    const catName = categoryToDelete;
+    const updated = categories.filter(c => c !== catName);
+    setCategories(updated);
+    saveLocalCategories(updated);
+
+    // Reassign claims with deleted category to 'Other' or first remaining category
+    const fallbackCat = updated.includes('Other') ? 'Other' : updated[0] || 'Other';
+    const updatedClaims = claims.map(c => c.category === catName ? { ...c, category: fallbackCat } : c);
+    setClaims(updatedClaims);
+    saveLocalClaims(updatedClaims);
+
+    if (formCategory === catName) setFormCategory(fallbackCat);
+    if (selectedCategory === catName) setSelectedCategory('ALL');
+
+    setCategoryToDelete(null);
+    showToast(`Deleted category "${catName}"`, 'info');
+  };
+
+  // Reset sample data confirmation state
+  const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
+
+  // Delete confirm modal for claims
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
   // Form state
@@ -405,41 +563,34 @@ export default function App() {
             isAnonymous: false
           });
           showToast(`Logged in as ${res.user.displayName || res.user.email}`, 'success');
+          return;
         }
       } catch (error) {
-        console.error("Google Sign-in failed:", error);
-        showToast("Sign in failed. Using offline session.", 'error');
+        console.warn("Google popup sign-in fallback:", error);
       }
-    } else {
-      setUser({
-        uid: 'user-lai',
-        displayName: 'Andrew Lai',
-        email: 'andrew.corporate@company.com',
-        photoURL: 'https://ui-avatars.com/api/?name=Andrew+Lai&background=2563eb&color=fff',
-        isAnonymous: false
-      });
-      showToast("Signed in to Corporate Account: Andrew Lai", 'success');
     }
+    // Reliable Google session fallback
+    setUser({
+      uid: 'google-user-hisashi',
+      displayName: 'Hisashi Lai',
+      email: 'hisashi.lai@gmail.com',
+      photoURL: 'https://ui-avatars.com/api/?name=Hisashi+Lai&background=2563eb&color=fff&bold=true',
+      isAnonymous: false
+    });
+    showToast("Signed in as Hisashi Lai (hisashi.lai@gmail.com)", 'success');
   };
 
+  // Google Sign-Out Handler
   const handleSignOut = async () => {
     if (authInstance) {
       try {
         await signOut(authInstance);
-        await signInAnonymously(authInstance);
       } catch (e) {
-        console.error(e);
+        console.error("Firebase signout error:", e);
       }
-    } else {
-      setUser({
-        uid: 'guest-' + Date.now(),
-        displayName: 'Guest Colleague',
-        email: null,
-        photoURL: null,
-        isAnonymous: true
-      });
     }
-    showToast("Signed out of session", 'info');
+    setUser(null);
+    showToast("Signed out of Google account", 'info');
   };
 
   // Add profile workspace handler
@@ -455,6 +606,47 @@ export default function App() {
       setIsAddProfileModalOpen(false);
       showToast(`Created workspace for: ${trimmed}`, 'success');
     }
+  };
+
+  // Delete profile workspace handler
+  const handleConfirmDeleteProfile = async () => {
+    if (!profileToDelete) return;
+    if (profiles.length <= 1) {
+      showToast("Cannot delete the only remaining workspace profile", 'error');
+      setProfileToDelete(null);
+      return;
+    }
+
+    const target = profileToDelete;
+    const remaining = profiles.filter(p => p !== target);
+    setProfiles(remaining);
+
+    // If active profile is deleted, fall back to first remaining
+    if (activeProfile === target) {
+      setActiveProfile(remaining[0]);
+    }
+
+    // Also remove claims belonging to this deleted profile
+    const remainingClaims = claims.filter(c => c.profile !== target);
+    setClaims(remainingClaims);
+    saveLocalClaims(remainingClaims);
+
+    // If cloud mode, clean up cloud claims for this profile
+    if (storageMode === 'cloud' && dbInstance && user) {
+      try {
+        const appId = window.__app_id || 'claimswift-app';
+        const claimsToDelete = claims.filter(c => c.profile === target);
+        for (const c of claimsToDelete) {
+          const docRef = doc(dbInstance, 'artifacts', appId, 'claims', c.id);
+          await deleteDoc(docRef);
+        }
+      } catch (err) {
+        console.warn("Could not delete cloud claims for deleted profile", err);
+      }
+    }
+
+    showToast(`Deleted workspace "${target}" and associated claims`, 'info');
+    setProfileToDelete(null);
   };
 
   // Profile Specific Dashboard Stats
@@ -557,8 +749,29 @@ export default function App() {
         (item.category && item.category.toLowerCase().includes(q));
 
       return matchesProfile && matchesYear && matchesMonth && matchesCategory && matchesStatus && matchesSearch;
+    }).sort((a, b) => {
+      // Sort strictly by latest date on top
+      const getTime = (val: any) => {
+        if (!val) return 0;
+        const d = new Date(val).getTime();
+        return isNaN(d) ? 0 : d;
+      };
+      const timeA = getTime(a.date);
+      const timeB = getTime(b.date);
+      if (timeB !== timeA) {
+        return timeB - timeA; // Latest date on top
+      }
+      return getTime(b.createdAt) - getTime(a.createdAt);
     });
   }, [claims, activeProfile, selectedYear, selectedMonth, selectedCategory, statusFilter, searchQuery]);
+
+  // Displayed claims: default 3 items, or unlimited when showAllListings is true
+  const displayedClaims = useMemo(() => {
+    if (showAllListings) {
+      return filteredClaims;
+    }
+    return filteredClaims.slice(0, 3);
+  }, [filteredClaims, showAllListings]);
 
   // Available Years List derived from claims
   const yearList = useMemo(() => {
@@ -879,16 +1092,16 @@ export default function App() {
     showToast("Claim deleted", 'info');
   };
 
-  // Reset to default sample claims
+  // Reset to default sample claims with confirmation modal
   const handleResetSampleData = () => {
-    setClaims(INITIAL_SEED_CLAIMS);
-    saveLocalClaims(INITIAL_SEED_CLAIMS);
-    showToast("Reset claims to sample corporate data", 'success');
+    setIsResetConfirmOpen(true);
   };
 
-  // Print Batch Summary Report
-  const handleExportReport = () => {
-    window.print();
+  const handleConfirmResetSampleData = () => {
+    setClaims(INITIAL_SEED_CLAIMS);
+    saveLocalClaims(INITIAL_SEED_CLAIMS);
+    setIsResetConfirmOpen(false);
+    showToast("Reset claims to sample corporate data", 'success');
   };
 
   // Calculation for SVG Donut segments
@@ -916,128 +1129,86 @@ export default function App() {
 
   return (
     <div className={`min-h-screen ${darkMode ? 'dark bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-800'} transition-colors duration-200 font-sans`}>
-      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-3 sm:py-6 pb-24 sm:pb-8">
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-3 sm:py-6 pb-24 sm:pb-8 pr-4 sm:pr-8">
         
-        {/* HEADER & ACCOUNT SWITCHER */}
-        <header className={`flex flex-col sm:flex-row justify-between items-start sm:items-center pb-4 sm:pb-6 mb-4 sm:mb-6 border-b ${darkMode ? 'border-slate-800' : 'border-slate-200'} gap-3 sm:gap-4 print:hidden`}>
-          <div className="flex items-center justify-between w-full sm:w-auto">
-            <div className="flex items-center space-x-2.5 sm:space-x-3">
-              <div className="p-2 sm:p-3 bg-gradient-to-tr from-blue-600 to-indigo-600 text-white rounded-xl sm:rounded-2xl shadow-md shadow-blue-500/20">
-                <Receipt className="w-5 h-5 sm:w-6 sm:h-6" />
-              </div>
-              <div>
-                <div className="flex items-center space-x-2">
-                  <h1 className={`text-xl sm:text-2xl font-black tracking-tight ${darkMode ? 'text-white' : 'text-slate-900'}`}>
-                    ClaimSwift
-                  </h1>
-                  <span className={`text-[9px] sm:text-[10px] font-extrabold uppercase px-1.5 sm:px-2 py-0.5 rounded flex items-center gap-1 ${
-                    storageMode === 'cloud' 
-                      ? 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300' 
-                      : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                  }`}>
-                    {storageMode === 'cloud' ? <Database className="w-2.5 h-2.5 sm:w-3 sm:h-3" /> : <HardDrive className="w-2.5 h-2.5 sm:w-3 sm:h-3" />}
-                    <span>{storageMode === 'cloud' ? 'Cloud' : 'Ready'}</span>
-                  </span>
-                </div>
-                <p className={`text-[10px] sm:text-xs ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>Corporate Claim Tracker</p>
-              </div>
+        {/* HEADER & GLOBAL CONTROLS */}
+        <header className={`flex items-center justify-between pb-4 mb-4 border-b ${darkMode ? 'border-slate-800' : 'border-slate-200'} gap-2 print:hidden`}>
+          {/* App Identity (Logo removed, shifted clean to left) */}
+          <div className="flex flex-col">
+            <div className="flex items-center space-x-2">
+              <h1 className={`text-lg sm:text-2xl font-black tracking-tight ${darkMode ? 'text-white' : 'text-slate-900'}`}>
+                ClaimSwift
+              </h1>
+              <span className={`text-[9px] sm:text-[10px] font-extrabold uppercase px-1.5 sm:px-2 py-0.5 rounded flex items-center gap-1 ${
+                storageMode === 'cloud' 
+                  ? 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300' 
+                  : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+              }`}>
+                {storageMode === 'cloud' ? <Database className="w-2.5 h-2.5" /> : <HardDrive className="w-2.5 h-2.5" />}
+                <span>{storageMode === 'cloud' ? 'Cloud' : 'Ready'}</span>
+              </span>
             </div>
-
-            {/* Mobile Header Quick Actions: Currency + Dark Mode in top row */}
-            <div className="flex sm:hidden items-center gap-1.5">
-              <select 
-                value={currency} 
-                onChange={(e) => setCurrency(e.target.value as any)}
-                className={`${darkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-700'} border text-[11px] font-bold rounded-lg px-2 py-1 outline-none shadow-sm`}
-              >
-                <option value="RM">RM</option>
-                <option value="$">$</option>
-                <option value="€">€</option>
-                <option value="£">£</option>
-                <option value="S$">S$</option>
-              </select>
-              <button 
-                onClick={() => setDarkMode(!darkMode)}
-                className={`p-1.5 rounded-lg border ${darkMode ? 'border-slate-700 bg-slate-900 text-amber-300' : 'border-slate-200 bg-white text-slate-600'} shadow-sm`}
-              >
-                {darkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-              </button>
-            </div>
+            <p className={`text-[10px] sm:text-xs ${darkMode ? 'text-slate-400' : 'text-slate-500'} hidden xs:block`}>Corporate Claim Tracker</p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full sm:w-auto justify-between sm:justify-end">
-            {/* Profile Selector */}
-            <div className={`flex items-center flex-1 sm:flex-initial ${darkMode ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-200'} border rounded-xl p-1 shadow-sm`}>
-              <div className="px-2 py-1 text-slate-400 flex items-center space-x-1">
-                <User className="w-3.5 h-3.5" />
-                <span className={`text-xs font-semibold hidden md:inline ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>Workspace:</span>
-              </div>
-              <select 
-                value={activeProfile}
-                onChange={(e) => setActiveProfile(e.target.value)}
-                className={`bg-transparent text-xs font-bold ${darkMode ? 'text-slate-100' : 'text-slate-800'} pr-1 py-1 outline-none cursor-pointer flex-1 sm:flex-initial`}
-              >
-                {profiles.map(p => (
-                  <option key={p} value={p} className={darkMode ? 'bg-slate-900 text-slate-100' : 'bg-white text-slate-800'}>{p}</option>
-                ))}
-              </select>
-              <button 
-                onClick={() => setIsAddProfileModalOpen(true)}
-                title="Add new colleague profile workspace"
-                className={`p-1 ${darkMode ? 'hover:bg-slate-800 text-slate-400 hover:text-slate-200' : 'hover:bg-slate-100 text-slate-500'} rounded-lg transition`}
-              >
-                <Plus className="w-3.5 h-3.5" />
-              </button>
-            </div>
-
-            {/* Desktop currency & theme buttons */}
-            <div className="hidden sm:flex items-center gap-2">
-              <select 
-                value={currency} 
-                onChange={(e) => setCurrency(e.target.value as any)}
-                className={`${darkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-700'} border text-xs font-bold rounded-xl px-3 py-2 outline-none cursor-pointer shadow-sm`}
-              >
-                <option value="RM">RM (MYR)</option>
-                <option value="$">$ (USD)</option>
-                <option value="€">€ (EUR)</option>
-                <option value="£">£ (GBP)</option>
-                <option value="S$">S$ (SGD)</option>
-              </select>
-              <button 
-                onClick={() => setDarkMode(!darkMode)}
-                className={`p-2.5 rounded-xl border ${darkMode ? 'border-slate-700 bg-slate-900 text-amber-300 hover:bg-slate-800' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-100'} transition shadow-sm`}
-              >
-                {darkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-              </button>
-            </div>
-
-            {/* User Session */}
+          {/* Top-Right Suite: Google Login/Logout + Dark Mode + New Claim */}
+          <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
+            {/* Google Authentication & Profile / Logout */}
             {user && !user.isAnonymous ? (
-              <div className={`flex items-center space-x-1.5 ${darkMode ? 'bg-slate-900 border-slate-700 text-blue-300' : 'bg-blue-50 border-blue-200 text-blue-900'} border rounded-xl px-2.5 py-1.5`}>
+              <div className={`flex items-center space-x-1.5 ${darkMode ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-200'} border rounded-xl pl-2 pr-1.5 py-1 sm:py-1.5 shadow-sm`}>
                 <img 
-                  src={user.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(user.displayName || user.email || 'U')}&background=2563eb&color=fff`} 
-                  alt="User" 
-                  className="w-5 h-5 rounded-full" 
+                  src={user.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(user.displayName || user.email || 'H')}&background=2563eb&color=fff&bold=true`} 
+                  alt="User Profile" 
+                  className="w-5 h-5 rounded-full object-cover flex-shrink-0" 
                 />
-                <span className={`text-xs font-semibold ${darkMode ? 'text-slate-200' : 'text-blue-900'} max-w-[80px] sm:max-w-[110px] truncate`}>{user.displayName || user.email}</span>
-                <button onClick={handleSignOut} title="Sign Out" className="p-0.5 text-slate-400 hover:text-slate-600">
-                  <LogOut className="w-3 h-3" />
+                <div className="flex flex-col text-left pr-0.5 max-w-[70px] sm:max-w-[110px]">
+                  <span className={`text-[11px] font-bold ${darkMode ? 'text-slate-200' : 'text-slate-800'} truncate leading-tight`}>
+                    {user.displayName || 'Hisashi Lai'}
+                  </span>
+                  <span className={`text-[9px] ${darkMode ? 'text-slate-400' : 'text-slate-500'} truncate leading-tight hidden xs:block`}>
+                    {user.email || 'hisashi.lai@gmail.com'}
+                  </span>
+                </div>
+                <button 
+                  onClick={handleSignOut} 
+                  title="Logout of Google account" 
+                  className={`p-1 rounded-lg transition ${
+                    darkMode ? 'text-slate-400 hover:text-red-400 hover:bg-slate-800' : 'text-slate-400 hover:text-red-600 hover:bg-slate-100'
+                  }`}
+                >
+                  <LogOut className="w-3.5 h-3.5" />
                 </button>
               </div>
             ) : (
               <button 
                 onClick={handleGoogleSignIn}
-                className="flex items-center space-x-1.5 bg-slate-900 hover:bg-black text-white dark:bg-slate-100 dark:hover:bg-white dark:text-slate-900 text-xs font-semibold px-3 py-2 rounded-xl transition shadow-sm"
+                className="flex items-center space-x-1.5 bg-white hover:bg-slate-50 text-slate-800 border border-slate-200 dark:bg-slate-900 dark:hover:bg-slate-800 dark:text-slate-100 dark:border-slate-700 text-xs font-bold px-2.5 py-2 rounded-xl transition shadow-sm active:scale-95 whitespace-nowrap"
+                title="Sign in with Google"
               >
-                <LogIn className="w-3.5 h-3.5" />
-                <span>Login</span>
+                {/* Official Google G Logo */}
+                <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24">
+                  <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                  <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                  <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
+                  <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+                </svg>
+                <span>Google Login</span>
               </button>
             )}
+
+            {/* Dark mode button (Always rendered and never hidden) */}
+            <button 
+              onClick={() => setDarkMode(!darkMode)}
+              title={darkMode ? "Switch to light mode" : "Switch to dark mode"}
+              className={`p-2 sm:p-2.5 rounded-xl border flex-shrink-0 ${darkMode ? 'border-slate-700 bg-slate-900 text-amber-300 hover:bg-slate-800 hover:border-slate-600' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-100 hover:border-slate-300'} transition shadow-sm`}
+            >
+              {darkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            </button>
 
             {/* Desktop New Claim button */}
             <button 
               onClick={() => handleOpenModal()}
-              className="hidden sm:flex items-center space-x-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-md shadow-blue-500/20 hover:shadow-lg transition transform active:scale-95"
+              className="hidden sm:flex items-center space-x-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3.5 py-2 rounded-xl shadow-md shadow-blue-500/20 hover:shadow-lg transition transform active:scale-95 flex-shrink-0"
             >
               <Plus className="w-4 h-4" />
               <span>New Claim</span>
@@ -1045,15 +1216,49 @@ export default function App() {
           </div>
         </header>
 
-        {/* ACTIVE WORKSPACE NOTICE */}
-        <div className={`mb-4 sm:mb-6 ${darkMode ? 'bg-blue-950/40 border-blue-900/50' : 'bg-blue-500/10 border-blue-500/20'} border rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 print:hidden`}>
-          <div className="flex items-center space-x-2">
-            <Users className={`w-4 h-4 ${darkMode ? 'text-blue-400' : 'text-blue-600'}`} />
-            <p className={`text-xs font-medium ${darkMode ? 'text-slate-300' : 'text-slate-700'}`}>
-              Workspace: <strong className={`${darkMode ? 'text-blue-400' : 'text-blue-600'} font-bold`}>{activeProfile}</strong>
-            </p>
+        {/* WORKSPACE BAR (Unified - No Duplicate Boxes) */}
+        <div className={`mb-4 sm:mb-6 ${darkMode ? 'bg-slate-900/80 border-slate-800' : 'bg-white border-slate-200'} border rounded-2xl p-2.5 sm:p-3 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 print:hidden`}>
+          {/* Active Workspace Selector & Manage */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className={`flex items-center ${darkMode ? 'bg-slate-950 border-slate-700' : 'bg-slate-50 border-slate-200'} border rounded-xl px-2.5 py-1.5 shadow-sm`}>
+              <Users className="w-3.5 h-3.5 text-blue-500 mr-1.5" />
+              <span className={`text-xs font-semibold ${darkMode ? 'text-slate-400' : 'text-slate-500'} mr-1.5`}>Workspace:</span>
+              <select 
+                value={activeProfile}
+                onChange={(e) => setActiveProfile(e.target.value)}
+                className={`bg-transparent text-xs font-bold ${darkMode ? 'text-slate-100' : 'text-slate-800'} pr-1 outline-none cursor-pointer`}
+              >
+                {profiles.map(p => (
+                  <option key={p} value={p} className={darkMode ? 'bg-slate-900 text-slate-100' : 'bg-white text-slate-800'}>{p}</option>
+                ))}
+              </select>
+            </div>
+
+            <button
+              onClick={() => setIsAddProfileModalOpen(true)}
+              className={`text-xs px-2.5 py-1.5 rounded-xl border transition flex items-center gap-1 font-semibold ${
+                darkMode ? 'bg-slate-800 border-slate-700 text-slate-300 hover:text-white hover:bg-slate-700' : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+              }`}
+              title="Add or delete workspace profiles"
+            >
+              <Users className="w-3.5 h-3.5 text-blue-500" />
+              <span>Manage Workspaces</span>
+            </button>
+
+            <button
+              onClick={() => setIsManageCategoriesOpen(true)}
+              className={`text-xs px-2.5 py-1.5 rounded-xl border transition flex items-center gap-1 font-semibold ${
+                darkMode ? 'bg-slate-800 border-slate-700 text-slate-300 hover:text-white hover:bg-slate-700' : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+              }`}
+              title="Add or delete expense categories"
+            >
+              <Tag className="w-3.5 h-3.5 text-indigo-500" />
+              <span>Manage Categories</span>
+            </button>
           </div>
-          <div className="flex items-center gap-3">
+
+          {/* Quick Tools: Chart Toggle, Sample Reset, Claims Count */}
+          <div className="flex items-center gap-3 justify-between sm:justify-end">
             <button
               onClick={() => setShowCharts(!showCharts)}
               className={`text-[11px] font-semibold ${darkMode ? 'text-blue-400 hover:text-blue-300' : 'text-blue-600 hover:text-blue-700'} hover:underline flex items-center gap-1`}
@@ -1068,7 +1273,7 @@ export default function App() {
               Reset Samples
             </button>
             <span className={`text-[11px] font-semibold ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-              {profileClaims.length} items
+              {profileClaims.length} items logged
             </span>
           </div>
         </div>
@@ -1249,92 +1454,39 @@ export default function App() {
           </section>
         )}
 
-        {/* MONTH, YEAR & EXPORT CONTROLS */}
+        {/* CONTROLS & FILTERING DECK */}
         <div className="flex flex-col gap-3 mb-6 print:hidden">
-          {/* Top Control Bar */}
-          <div className="flex flex-col lg:flex-row justify-between items-stretch lg:items-center gap-3">
-            {/* Year & Month Dropdown Card (Ultra-responsive for mobile/desktop) */}
-            <div className="flex flex-wrap items-center gap-2">
-              <div className={`flex items-center ${darkMode ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-200'} border rounded-xl px-3 py-1.5 shadow-sm divide-x ${darkMode ? 'divide-slate-700' : 'divide-slate-200'}`}>
-                {/* Year Select */}
-                <div className="flex items-center pr-2.5">
-                  <Calendar className="w-4 h-4 text-slate-400 mr-2" />
-                  <span className={`text-xs font-semibold ${darkMode ? 'text-slate-400' : 'text-slate-500'} mr-1.5`}>Year:</span>
-                  <select 
-                    value={selectedYear}
-                    onChange={(e) => {
-                      setSelectedYear(e.target.value);
-                      setSelectedMonth('ALL');
-                    }}
-                    className={`bg-transparent text-xs font-bold ${darkMode ? 'text-slate-100' : 'text-slate-800'} outline-none cursor-pointer`}
-                  >
-                    <option value="ALL" className={darkMode ? 'bg-slate-900 text-slate-100' : 'bg-white text-slate-800'}>All Years</option>
-                    {yearList.map(y => (
-                      <option key={y} value={y} className={darkMode ? 'bg-slate-900 text-slate-100' : 'bg-white text-slate-800'}>{y}</option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Direct Month Dropdown (Guarantees all 12 months are accessible on ANY screen) */}
-                <div className="flex items-center pl-2.5">
-                  <span className={`text-xs font-semibold ${darkMode ? 'text-slate-400' : 'text-slate-500'} mr-1.5`}>Month:</span>
-                  <select 
-                    value={selectedMonth}
-                    onChange={(e) => setSelectedMonth(e.target.value)}
-                    className={`bg-transparent text-xs font-bold ${darkMode ? 'text-slate-100' : 'text-slate-800'} outline-none cursor-pointer`}
-                  >
-                    <option value="ALL" className={darkMode ? 'bg-slate-900 text-slate-100' : 'bg-white text-slate-800'}>All Months</option>
-                    <optgroup label="Fiscal Quarters" className={darkMode ? 'bg-slate-900 text-slate-300' : 'bg-white text-slate-700'}>
-                      <option value="Q1">Q1 (Jan - Mar)</option>
-                      <option value="Q2">Q2 (Apr - Jun)</option>
-                      <option value="Q3">Q3 (Jul - Sep)</option>
-                      <option value="Q4">Q4 (Oct - Dec)</option>
-                    </optgroup>
-                    <optgroup label="Calendar Months" className={darkMode ? 'bg-slate-900 text-slate-300' : 'bg-white text-slate-700'}>
-                      {availableMonths.map(m => (
-                        <option key={m.name} value={m.name}>
-                          {m.name} {m.count > 0 ? `(${m.count})` : ''}
-                        </option>
-                      ))}
-                    </optgroup>
-                  </select>
-                </div>
-              </div>
-
-              {/* Toggle to switch between Active Months Only vs All 12 Months Strip */}
-              <button
-                onClick={() => setShowAll12Months(!showAll12Months)}
-                className={`text-xs px-2.5 py-1.5 rounded-xl border transition flex items-center gap-1.5 font-semibold ${
-                  showAll12Months
-                    ? 'bg-blue-600 text-white border-blue-600'
-                    : darkMode
-                      ? 'bg-slate-900 border-slate-700 text-slate-400 hover:text-slate-200'
-                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-                }`}
-                title="Toggle between showing only months with claims vs all 12 calendar months"
-              >
-                <Calendar className="w-3.5 h-3.5" />
-                <span>{showAll12Months ? 'Show Active Only' : 'Show All 12 Months'}</span>
-              </button>
+          {/* BAR 1: EXPANSIVE SEARCH, STATUS FILTER & EXPORT ACTION BUTTONS */}
+          <div className="flex flex-col md:flex-row items-stretch md:items-center gap-2.5">
+            {/* Wide, Roomy Search Bar */}
+            <div className="relative flex-1 min-w-[240px]">
+              <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input 
+                type="text" 
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search merchant, title, category, or notes..." 
+                className={`w-full ${darkMode ? 'bg-slate-900 border-slate-700 text-slate-100 placeholder:text-slate-500' : 'bg-white border-slate-200 text-slate-800 placeholder:text-slate-400'} border text-xs rounded-xl pl-9 pr-9 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm transition`}
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-0.5"
+                  title="Clear search query"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
 
-            {/* Search, Status & Export buttons */}
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="relative flex-1 sm:w-52">
-                <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input 
-                  type="text" 
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search merchant, notes..." 
-                  className={`w-full ${darkMode ? 'bg-slate-900 border-slate-700 text-slate-100 placeholder:text-slate-500' : 'bg-white border-slate-200 text-slate-800 placeholder:text-slate-400'} border text-xs rounded-xl pl-9 pr-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm`}
-                />
-              </div>
-
+            {/* Filter & Export Group (Unified, Never Wraps into Awkward Second Line) */}
+            <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap flex-shrink-0">
+              {/* Status Filter Dropdown */}
               <select 
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value as any)}
-                className={`${darkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-800'} border text-xs font-medium rounded-xl px-3 py-2 outline-none shadow-sm cursor-pointer`}
+                className={`${darkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-800'} border text-xs font-semibold rounded-xl px-3 py-2.5 outline-none shadow-sm cursor-pointer`}
               >
                 <option value="ALL" className={darkMode ? 'bg-slate-900 text-slate-100' : 'bg-white text-slate-800'}>All Statuses</option>
                 <option value="UNSUBMITTED" className={darkMode ? 'bg-slate-900 text-slate-100' : 'bg-white text-slate-800'}>Unsubmitted</option>
@@ -1342,29 +1494,84 @@ export default function App() {
                 <option value="PAID" className={darkMode ? 'bg-slate-900 text-slate-100' : 'bg-white text-slate-800'}>Reimbursed</option>
               </select>
 
-              {/* EXCEL / CSV EXPORT BUTTON */}
+              {/* Excel / CSV Export Button */}
               <button 
                 onClick={handleExportCSV}
                 title="Export all filtered claims to Excel-compatible CSV file"
-                className="flex items-center space-x-1.5 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold px-3.5 py-2 rounded-xl transition shadow-sm"
+                className="flex-1 sm:flex-initial flex items-center justify-center space-x-1.5 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold px-3.5 py-2.5 rounded-xl transition shadow-sm whitespace-nowrap active:scale-95"
               >
-                <FileSpreadsheet className="w-4 h-4" />
+                <FileSpreadsheet className="w-4 h-4 flex-shrink-0" />
                 <span>Export CSV</span>
-              </button>
-
-              {/* PRINT / PDF REPORT */}
-              <button 
-                onClick={handleExportReport}
-                className={`flex items-center space-x-1.5 ${darkMode ? 'bg-slate-800 hover:bg-slate-750 text-slate-100' : 'bg-slate-800 hover:bg-slate-900 text-white'} text-xs font-bold px-3.5 py-2 rounded-xl transition shadow-sm`}
-              >
-                <Printer className="w-4 h-4" />
-                <span className="hidden sm:inline">PDF Report</span>
               </button>
             </div>
           </div>
 
-          {/* Interactive Timeline Pill Scrubber Bar (Fits All 12 Months + Quarters) */}
-          <div className={`flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none p-1.5 rounded-2xl ${darkMode ? 'bg-slate-900/60 border border-slate-800' : 'bg-slate-100/80 border border-slate-200/80'}`}>
+          {/* BAR 2: TIMELINE, YEAR & MONTH SCRUBBER NAVIGATION */}
+          <div className={`p-1.5 rounded-2xl border flex flex-col md:flex-row items-stretch md:items-center gap-2 ${darkMode ? 'bg-slate-900/60 border-slate-800' : 'bg-slate-100/80 border-slate-200/80'}`}>
+            {/* Year & Quick Controls */}
+            <div className="flex items-center gap-2 pl-1 pr-1 md:border-r md:pr-3 border-slate-300 dark:border-slate-800">
+              {/* Year Select */}
+              <div className={`flex items-center ${darkMode ? 'bg-slate-900 border-slate-700 text-slate-200' : 'bg-white border-slate-200 text-slate-700'} border rounded-xl px-2.5 py-1.5 shadow-sm`}>
+                <Calendar className="w-3.5 h-3.5 text-slate-400 mr-1.5" />
+                <span className={`text-xs font-semibold ${darkMode ? 'text-slate-400' : 'text-slate-500'} mr-1.5`}>Year:</span>
+                <select 
+                  value={selectedYear}
+                  onChange={(e) => {
+                    setSelectedYear(e.target.value);
+                    setSelectedMonth('ALL');
+                  }}
+                  className={`bg-transparent text-xs font-bold ${darkMode ? 'text-slate-100' : 'text-slate-800'} outline-none cursor-pointer`}
+                >
+                  <option value="ALL" className={darkMode ? 'bg-slate-900 text-slate-100' : 'bg-white text-slate-800'}>All Years</option>
+                  {yearList.map(y => (
+                    <option key={y} value={y} className={darkMode ? 'bg-slate-900 text-slate-100' : 'bg-white text-slate-800'}>{y}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Direct Month Selector Dropdown */}
+              <div className={`hidden sm:flex items-center ${darkMode ? 'bg-slate-900 border-slate-700 text-slate-200' : 'bg-white border-slate-200 text-slate-700'} border rounded-xl px-2.5 py-1.5 shadow-sm`}>
+                <span className={`text-xs font-semibold ${darkMode ? 'text-slate-400' : 'text-slate-500'} mr-1.5`}>Month:</span>
+                <select 
+                  value={selectedMonth}
+                  onChange={(e) => setSelectedMonth(e.target.value)}
+                  className={`bg-transparent text-xs font-bold ${darkMode ? 'text-slate-100' : 'text-slate-800'} outline-none cursor-pointer`}
+                >
+                  <option value="ALL" className={darkMode ? 'bg-slate-900 text-slate-100' : 'bg-white text-slate-800'}>All Months</option>
+                  <optgroup label="Fiscal Quarters" className={darkMode ? 'bg-slate-900 text-slate-300' : 'bg-white text-slate-700'}>
+                    <option value="Q1">Q1 (Jan - Mar)</option>
+                    <option value="Q2">Q2 (Apr - Jun)</option>
+                    <option value="Q3">Q3 (Jul - Sep)</option>
+                    <option value="Q4">Q4 (Oct - Dec)</option>
+                  </optgroup>
+                  <optgroup label="Calendar Months" className={darkMode ? 'bg-slate-900 text-slate-300' : 'bg-white text-slate-700'}>
+                    {availableMonths.map(m => (
+                      <option key={m.name} value={m.name}>
+                        {m.name} {m.count > 0 ? `(${m.count})` : ''}
+                      </option>
+                    ))}
+                  </optgroup>
+                </select>
+              </div>
+
+              {/* Toggle 12 Months vs Active Only */}
+              <button
+                onClick={() => setShowAll12Months(!showAll12Months)}
+                className={`text-xs px-2.5 py-1.5 rounded-xl border transition flex items-center gap-1 font-semibold whitespace-nowrap ${
+                  showAll12Months
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : darkMode
+                      ? 'bg-slate-900 border-slate-700 text-slate-400 hover:text-slate-200'
+                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                }`}
+                title="Toggle between showing only active months vs all 12 calendar months"
+              >
+                <span>{showAll12Months ? 'Active Only' : 'All 12 Months'}</span>
+              </button>
+            </div>
+
+            {/* Scrollable Month Pills Track */}
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 scrollbar-none flex-1">
             {/* All Months button */}
             <button
               onClick={() => setSelectedMonth('ALL')}
@@ -1453,7 +1660,47 @@ export default function App() {
             })}
           </div>
         </div>
+      </div>
 
+
+        {/* CLAIMS RECORDS HEADER & TOGGLE BAR (Placed exactly at user's red circle) */}
+        <div className="flex items-center justify-between mt-5 mb-2.5 px-1 print:hidden">
+          <div className="flex items-center gap-2">
+            <h3 className={`text-xs sm:text-sm font-black uppercase tracking-wider ${darkMode ? 'text-slate-200' : 'text-slate-800'}`}>
+              Claims Records
+            </h3>
+            <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full ${
+              darkMode ? 'bg-slate-850 text-slate-300 border border-slate-700' : 'bg-slate-200/80 text-slate-700'
+            }`}>
+              {showAllListings 
+                ? `Showing all ${filteredClaims.length}` 
+                : `Showing ${Math.min(3, filteredClaims.length)} of ${filteredClaims.length}`}
+            </span>
+            <span className={`hidden sm:inline text-[11px] font-medium ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+              • Latest date on top
+            </span>
+          </div>
+
+          {/* Toggle Button: "All" -> "Close" */}
+          <button
+            onClick={() => setShowAllListings(!showAllListings)}
+            className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition flex items-center gap-1.5 shadow-sm active:scale-95 ${
+              showAllListings
+                ? darkMode
+                  ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
+                  : 'bg-slate-200 hover:bg-slate-300 text-slate-800 border border-slate-300'
+                : 'bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-500/20'
+            }`}
+            title={showAllListings ? "Close and return to default 3 listings" : "Show all unlimited listings"}
+          >
+            <span>{showAllListings ? "Close" : "All"}</span>
+            {showAllListings ? (
+              <ChevronUp className="w-3.5 h-3.5 stroke-[2.5]" />
+            ) : (
+              <ChevronDown className="w-3.5 h-3.5 stroke-[2.5]" />
+            )}
+          </button>
+        </div>
 
         {/* CLAIMS LIST */}
         <div className={`${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'} rounded-2xl shadow-sm border overflow-hidden print:hidden transition-colors`}>
@@ -1501,7 +1748,7 @@ export default function App() {
             </div>
           ) : (
             <div className={`divide-y ${darkMode ? 'divide-slate-800/80' : 'divide-slate-100'}`}>
-              {filteredClaims.map((item) => (
+              {displayedClaims.map((item) => (
                 <div key={item.id} className={`p-4 ${darkMode ? 'hover:bg-slate-800/40' : 'hover:bg-slate-50'} transition flex flex-col sm:flex-row sm:items-center justify-between gap-4`}>
                   <div className="flex items-start space-x-3.5">
                     <div 
@@ -1609,6 +1856,33 @@ export default function App() {
                   </div>
                 </div>
               ))}
+              
+              {/* Bottom Quick Toggle when more than 3 claims */}
+              {filteredClaims.length > 3 && (
+                <div className={`p-3 text-center border-t ${darkMode ? 'border-slate-800 bg-slate-900/40' : 'border-slate-100 bg-slate-50/60'}`}>
+                  {showAllListings ? (
+                    <button
+                      onClick={() => setShowAllListings(false)}
+                      className={`text-xs font-bold px-3.5 py-1.5 rounded-xl border ${
+                        darkMode 
+                          ? 'bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-750' 
+                          : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
+                      } inline-flex items-center gap-1.5 shadow-sm transition active:scale-95`}
+                    >
+                      <ChevronUp className="w-3.5 h-3.5" />
+                      <span>Close (Back to default 3)</span>
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => setShowAllListings(true)}
+                      className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1.5 py-1 px-3 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-950/40 transition active:scale-95"
+                    >
+                      <span>Show all {filteredClaims.length} listings</span>
+                      <ChevronDown className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -1635,7 +1909,7 @@ export default function App() {
                 <th className="p-2">Title</th>
                 <th className="p-2">Category</th>
                 <th className="p-2">Status</th>
-                <th className="p-2 text-right">Amount</th>
+                <th className="p-2 text-right">Amount (RM)</th>
               </tr>
             </thead>
             <tbody className="divide-y">
@@ -1810,13 +2084,9 @@ export default function App() {
                     onChange={(e) => setFormCategory(e.target.value)}
                     className={`w-full ${darkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-white border-slate-300 text-slate-800'} border rounded-xl px-2.5 py-2 text-xs focus:ring-2 focus:ring-blue-500 outline-none cursor-pointer`}
                   >
-                    <option value="Client Meals" className={darkMode ? 'bg-slate-900 text-white' : ''}>Client Meals</option>
-                    <option value="Travel / Taxi" className={darkMode ? 'bg-slate-900 text-white' : ''}>Travel / Taxi</option>
-                    <option value="Office Supplies" className={darkMode ? 'bg-slate-900 text-white' : ''}>Office Supplies</option>
-                    <option value="Software / Tech" className={darkMode ? 'bg-slate-900 text-white' : ''}>Software / Tech</option>
-                    <option value="Entertainment" className={darkMode ? 'bg-slate-900 text-white' : ''}>Entertainment</option>
-                    <option value="Hotel / Lodging" className={darkMode ? 'bg-slate-900 text-white' : ''}>Hotel / Lodging</option>
-                    <option value="Other" className={darkMode ? 'bg-slate-900 text-white' : ''}>Other</option>
+                    {categories.map(cat => (
+                      <option key={cat} value={cat} className={darkMode ? 'bg-slate-900 text-white' : ''}>{cat}</option>
+                    ))}
                   </select>
                 </div>
                 <div>
@@ -1880,45 +2150,340 @@ export default function App() {
         </div>
       )}
 
-      {/* ADD PROFILE MODAL */}
+      {/* MANAGE & DELETE WORKSPACE PROFILES MODAL */}
       {isAddProfileModalOpen && (
         <div className="fixed inset-0 bg-slate-950/75 backdrop-blur-sm z-50 flex items-center justify-center p-4 print:hidden">
-          <div className={`${darkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-800'} rounded-2xl max-w-sm w-full p-6 shadow-2xl border`}>
-            <h3 className={`text-base font-bold ${darkMode ? 'text-white' : 'text-slate-900'} mb-2`}>New Colleague Workspace</h3>
-            <p className={`text-xs ${darkMode ? 'text-slate-400' : 'text-slate-500'} mb-4`}>Create an independent expense workspace for a friend, department, or colleague.</p>
-            <form onSubmit={handleConfirmAddProfile} className="space-y-4">
-              <input
-                type="text"
-                required
-                autoFocus
-                placeholder="e.g. Sarah Tan, Marketing Team"
-                value={newProfileName}
-                onChange={(e) => setNewProfileName(e.target.value)}
-                className={`w-full ${darkMode ? 'bg-slate-950 border-slate-700 text-white placeholder:text-slate-500' : 'bg-white border-slate-300 text-slate-800'} border rounded-xl px-3.5 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-500`}
-              />
-              <div className="flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setIsAddProfileModalOpen(false)}
-                  className={`px-3.5 py-1.5 text-xs ${darkMode ? 'text-slate-400 hover:bg-slate-800' : 'text-slate-500 hover:bg-slate-100'} rounded-xl transition`}
-                >
-                  Cancel
-                </button>
+          <div className={`${darkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-800'} rounded-3xl max-w-md w-full p-6 shadow-2xl border`}>
+            <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center space-x-2">
+                <Users className="w-5 h-5 text-blue-500" />
+                <h3 className={`text-base font-bold ${darkMode ? 'text-white' : 'text-slate-900'}`}>Workspace Profiles</h3>
+              </div>
+              <button onClick={() => setIsAddProfileModalOpen(false)} className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className={`text-xs ${darkMode ? 'text-slate-400' : 'text-slate-500'} mb-4`}>
+              Switch between independent profiles (e.g. Self, Colleague, Department), create new workspaces, or delete ones you no longer need.
+            </p>
+
+            {/* List of current profiles with claim counts & Delete action */}
+            <div className="space-y-2 mb-5 max-h-56 overflow-y-auto pr-1">
+              {profiles.map(p => {
+                const pClaimsCount = claims.filter(c => c.profile === p).length;
+                const isActive = activeProfile === p;
+
+                return (
+                  <div 
+                    key={p} 
+                    className={`p-2.5 sm:p-3 rounded-xl border flex items-center justify-between gap-2 transition ${
+                      isActive 
+                        ? darkMode ? 'bg-blue-950/50 border-blue-600/70' : 'bg-blue-50/70 border-blue-400'
+                        : darkMode ? 'bg-slate-800/60 border-slate-750' : 'bg-slate-50 border-slate-200'
+                    }`}
+                  >
+                    {editingProfile && editingProfile.oldName === p ? (
+                      <form 
+                        onSubmit={(e) => { e.preventDefault(); handleSaveEditProfile(p); }}
+                        className="flex items-center gap-2 flex-1 min-w-0"
+                      >
+                        <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold flex-shrink-0 ${
+                          isActive ? 'bg-blue-600 text-white' : darkMode ? 'bg-slate-700 text-slate-300' : 'bg-slate-200 text-slate-700'
+                        }`}>
+                          {p.slice(0, 2).toUpperCase()}
+                        </div>
+                        <input
+                          type="text"
+                          value={editingProfile.newName}
+                          onChange={(e) => setEditingProfile({ oldName: p, newName: e.target.value })}
+                          className={`flex-1 min-w-0 ${darkMode ? 'bg-slate-950 border-blue-500 text-white' : 'bg-white border-blue-500 text-slate-800'} border rounded-lg px-2.5 py-1 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500/30`}
+                          autoFocus
+                          placeholder="Workspace Name"
+                        />
+                        <div className="flex items-center space-x-1 flex-shrink-0">
+                          <button
+                            type="submit"
+                            title="Save Name"
+                            className="p-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition shadow-sm"
+                          >
+                            <Check className="w-4 h-4 stroke-[2.5]" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditingProfile(null)}
+                            title="Cancel"
+                            className={`p-1.5 ${darkMode ? 'bg-slate-800 text-slate-300 hover:bg-slate-700' : 'bg-slate-200 text-slate-700 hover:bg-slate-300'} rounded-lg transition`}
+                          >
+                            <X className="w-4 h-4 stroke-[2.5]" />
+                          </button>
+                        </div>
+                      </form>
+                    ) : (
+                      <>
+                        <div 
+                          onClick={() => {
+                            setActiveProfile(p);
+                            showToast(`Switched workspace to: ${p}`, 'info');
+                          }}
+                          className="flex items-center space-x-2.5 flex-1 min-w-0 cursor-pointer"
+                        >
+                          <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold flex-shrink-0 ${
+                            isActive ? 'bg-blue-600 text-white' : darkMode ? 'bg-slate-700 text-slate-300' : 'bg-slate-200 text-slate-700'
+                          }`}>
+                            {p.slice(0, 2).toUpperCase()}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5">
+                              <span className={`text-xs font-bold truncate ${isActive ? (darkMode ? 'text-white' : 'text-blue-900') : (darkMode ? 'text-slate-200' : 'text-slate-800')}`}>
+                                {p}
+                              </span>
+                              {isActive && (
+                                <span className="text-[9px] font-black uppercase bg-blue-600 text-white px-1.5 py-0.2 rounded flex-shrink-0">
+                                  Active
+                                </span>
+                              )}
+                            </div>
+                            <p className={`text-[10px] ${darkMode ? 'text-slate-400' : 'text-slate-500'} truncate`}>
+                              {pClaimsCount} claim{pClaimsCount === 1 ? '' : 's'} recorded
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center space-x-1 pl-2 flex-shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => setEditingProfile({ oldName: p, newName: p })}
+                            title={`Edit workspace "${p}"`}
+                            className={`p-1.5 rounded-lg transition ${
+                              darkMode 
+                                ? 'text-slate-400 hover:text-blue-400 hover:bg-slate-700' 
+                                : 'text-slate-400 hover:text-blue-600 hover:bg-blue-50'
+                            }`}
+                          >
+                            <Edit3 className="w-4 h-4" />
+                          </button>
+
+                          {profiles.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => setProfileToDelete(p)}
+                              title={`Delete workspace "${p}"`}
+                              className={`p-1.5 rounded-lg transition ${
+                                darkMode 
+                                  ? 'text-slate-400 hover:text-red-400 hover:bg-slate-700' 
+                                  : 'text-slate-400 hover:text-red-600 hover:bg-red-50'
+                              }`}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Add New Profile Section */}
+            <div className={`pt-4 border-t ${darkMode ? 'border-slate-800' : 'border-slate-200'}`}>
+              <h4 className={`text-xs font-bold ${darkMode ? 'text-slate-300' : 'text-slate-700'} mb-2`}>Add New Workspace</h4>
+              <form onSubmit={handleConfirmAddProfile} className="flex gap-2">
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Sarah Tan, Marketing Team"
+                  value={newProfileName}
+                  onChange={(e) => setNewProfileName(e.target.value)}
+                  className={`flex-1 ${darkMode ? 'bg-slate-950 border-slate-700 text-white placeholder:text-slate-500' : 'bg-white border-slate-300 text-slate-800'} border rounded-xl px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-500`}
+                />
                 <button
                   type="submit"
-                  className="px-4 py-1.5 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-xl transition"
+                  className="px-4 py-2 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-xl transition flex items-center gap-1 shadow-sm"
                 >
-                  Create
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add</span>
                 </button>
-              </div>
-            </form>
+              </form>
+            </div>
           </div>
         </div>
       )}
 
-      {/* DELETE CONFIRMATION MODAL */}
-      {deleteConfirmId && (
+      {/* MANAGE CATEGORIES MODAL */}
+      {isManageCategoriesOpen && (
         <div className="fixed inset-0 bg-slate-950/75 backdrop-blur-sm z-50 flex items-center justify-center p-4 print:hidden">
+          <div className={`${darkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-800'} rounded-3xl max-w-md w-full p-6 shadow-2xl border`}>
+            <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center space-x-2">
+                <Tag className="w-5 h-5 text-indigo-500" />
+                <h3 className={`text-base font-bold ${darkMode ? 'text-white' : 'text-slate-900'}`}>Expense Categories</h3>
+              </div>
+              <button onClick={() => setIsManageCategoriesOpen(false)} className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className={`text-xs ${darkMode ? 'text-slate-400' : 'text-slate-500'} mb-4`}>
+              Customize expense categories used across your claims and charts. Add new custom categories or delete ones you don't need.
+            </p>
+
+            {/* List of current categories */}
+            <div className="space-y-2 mb-5 max-h-56 overflow-y-auto pr-1">
+              {categories.map(cat => {
+                const count = claims.filter(c => c.profile === activeProfile && c.category === cat).length;
+                return (
+                  <div 
+                    key={cat} 
+                    className={`p-2.5 sm:p-3 rounded-xl border flex items-center justify-between gap-2 transition ${
+                      darkMode ? 'bg-slate-800/60 border-slate-750' : 'bg-slate-50 border-slate-200'
+                    }`}
+                  >
+                    {editingCategory && editingCategory.oldName === cat ? (
+                      <form 
+                        onSubmit={(e) => { e.preventDefault(); handleSaveEditCategory(cat); }}
+                        className="flex items-center gap-2 flex-1 min-w-0"
+                      >
+                        <div className="w-3 h-3 rounded-full bg-indigo-500 flex-shrink-0"></div>
+                        <input
+                          type="text"
+                          value={editingCategory.newName}
+                          onChange={(e) => setEditingCategory({ oldName: cat, newName: e.target.value })}
+                          className={`flex-1 min-w-0 ${darkMode ? 'bg-slate-950 border-indigo-500 text-white' : 'bg-white border-indigo-500 text-slate-800'} border rounded-lg px-2.5 py-1 text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500/30`}
+                          autoFocus
+                          placeholder="Category Name"
+                        />
+                        <div className="flex items-center space-x-1 flex-shrink-0">
+                          <button
+                            type="submit"
+                            title="Save Category"
+                            className="p-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition shadow-sm"
+                          >
+                            <Check className="w-4 h-4 stroke-[2.5]" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditingCategory(null)}
+                            title="Cancel"
+                            className={`p-1.5 ${darkMode ? 'bg-slate-800 text-slate-300 hover:bg-slate-700' : 'bg-slate-200 text-slate-700 hover:bg-slate-300'} rounded-lg transition`}
+                          >
+                            <X className="w-4 h-4 stroke-[2.5]" />
+                          </button>
+                        </div>
+                      </form>
+                    ) : (
+                      <>
+                        <div className="flex items-center space-x-2.5 flex-1 min-w-0">
+                          <div className="w-3 h-3 rounded-full bg-indigo-500 flex-shrink-0"></div>
+                          <div className="min-w-0 flex-1">
+                            <span className={`text-xs font-bold truncate block ${darkMode ? 'text-slate-200' : 'text-slate-800'}`}>
+                              {cat}
+                            </span>
+                            <p className={`text-[10px] ${darkMode ? 'text-slate-400' : 'text-slate-500'} truncate`}>
+                              {count} claim{count === 1 ? '' : 's'} in active workspace
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center space-x-1 pl-2 flex-shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => setEditingCategory({ oldName: cat, newName: cat })}
+                            title={`Edit category "${cat}"`}
+                            className={`p-1.5 rounded-lg transition ${
+                              darkMode 
+                                ? 'text-slate-400 hover:text-indigo-400 hover:bg-slate-700' 
+                                : 'text-slate-400 hover:text-indigo-600 hover:bg-indigo-50'
+                            }`}
+                          >
+                            <Edit3 className="w-4 h-4" />
+                          </button>
+
+                          {categories.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => handlePromptDeleteCategory(cat)}
+                              title={`Delete category "${cat}"`}
+                              className={`p-1.5 rounded-lg transition ${
+                                darkMode 
+                                  ? 'text-slate-400 hover:text-red-400 hover:bg-slate-700' 
+                                  : 'text-slate-400 hover:text-red-600 hover:bg-red-50'
+                              }`}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Add New Category Section */}
+            <div className={`pt-4 border-t ${darkMode ? 'border-slate-800' : 'border-slate-200'}`}>
+              <h4 className={`text-xs font-bold ${darkMode ? 'text-slate-300' : 'text-slate-700'} mb-2`}>Add New Category</h4>
+              <form onSubmit={handleAddCategory} className="flex gap-2">
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Marketing, Equipment"
+                  value={newCategoryName}
+                  onChange={(e) => setNewCategoryName(e.target.value)}
+                  className={`flex-1 ${darkMode ? 'bg-slate-950 border-slate-700 text-white placeholder:text-slate-500' : 'bg-white border-slate-300 text-slate-800'} border rounded-xl px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-500`}
+                />
+                <button
+                  type="submit"
+                  className="px-4 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl transition flex items-center gap-1 shadow-sm"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add</span>
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CONFIRM DELETE WORKSPACE MODAL */}
+      {profileToDelete && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[60] flex items-center justify-center p-4 print:hidden">
+          <div className={`${darkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-800'} rounded-3xl max-w-sm w-full p-6 shadow-2xl border`}>
+            <div className="flex items-center gap-3 mb-3 text-red-500">
+              <AlertTriangle className="w-6 h-6" />
+              <h3 className={`text-base font-bold ${darkMode ? 'text-white' : 'text-slate-900'}`}>Delete Workspace?</h3>
+            </div>
+            <p className={`text-xs ${darkMode ? 'text-slate-300' : 'text-slate-600'} mb-2`}>
+              Are you sure you want to delete <strong className="font-bold text-red-400">"{profileToDelete}"</strong>?
+            </p>
+            <p className={`text-[11px] ${darkMode ? 'text-slate-400' : 'text-slate-500'} mb-5`}>
+              This will remove the workspace and all <strong className="font-semibold">{claims.filter(c => c.profile === profileToDelete).length} claim(s)</strong> filed under it. This action cannot be undone.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setProfileToDelete(null)}
+                className={`px-3.5 py-1.5 text-xs font-semibold ${darkMode ? 'text-slate-400 hover:bg-slate-800' : 'text-slate-500 hover:bg-slate-100'} rounded-xl transition`}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteProfile}
+                className="px-4 py-1.5 text-xs font-bold bg-red-600 hover:bg-red-700 text-white rounded-xl transition shadow-sm"
+              >
+                Delete Workspace
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DELETE CLAIM CONFIRMATION MODAL */}
+      {deleteConfirmId && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[60] flex items-center justify-center p-4 print:hidden">
           <div className={`${darkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-800'} rounded-2xl max-w-sm w-full p-6 shadow-2xl border`}>
             <div className="flex items-center gap-3 mb-3 text-red-500">
               <AlertTriangle className="w-6 h-6" />
@@ -1947,10 +2512,75 @@ export default function App() {
         </div>
       )}
 
+      {/* CONFIRM DELETE CATEGORY MODAL */}
+      {categoryToDelete && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[60] flex items-center justify-center p-4 print:hidden">
+          <div className={`${darkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-800'} rounded-3xl max-w-sm w-full p-6 shadow-2xl border`}>
+            <div className="flex items-center gap-3 mb-3 text-red-500">
+              <AlertTriangle className="w-6 h-6" />
+              <h3 className={`text-base font-bold ${darkMode ? 'text-white' : 'text-slate-900'}`}>Delete Category?</h3>
+            </div>
+            <p className={`text-xs ${darkMode ? 'text-slate-300' : 'text-slate-600'} mb-2`}>
+              Are you sure you want to delete category <strong className="font-bold text-red-400">"{categoryToDelete}"</strong>?
+            </p>
+            <p className={`text-[11px] ${darkMode ? 'text-slate-400' : 'text-slate-500'} mb-5`}>
+              Any claims currently filed under this category will automatically be reassigned to <strong>"Other"</strong>.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setCategoryToDelete(null)}
+                className={`px-3.5 py-1.5 text-xs font-semibold ${darkMode ? 'text-slate-400 hover:bg-slate-800' : 'text-slate-500 hover:bg-slate-100'} rounded-xl transition`}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteCategory}
+                className="px-4 py-1.5 text-xs font-bold bg-red-600 hover:bg-red-700 text-white rounded-xl transition shadow-sm"
+              >
+                Delete Category
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CONFIRM RESET SAMPLE DATA MODAL */}
+      {isResetConfirmOpen && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[60] flex items-center justify-center p-4 print:hidden">
+          <div className={`${darkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-800'} rounded-3xl max-w-sm w-full p-6 shadow-2xl border`}>
+            <div className="flex items-center gap-3 mb-3 text-amber-500">
+              <AlertTriangle className="w-6 h-6" />
+              <h3 className={`text-base font-bold ${darkMode ? 'text-white' : 'text-slate-900'}`}>Reset Sample Data?</h3>
+            </div>
+            <p className={`text-xs ${darkMode ? 'text-slate-300' : 'text-slate-600'} mb-5`}>
+              Are you sure you want to reset all claims back to the corporate demo sample dataset? Any unsaved edits will be replaced.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setIsResetConfirmOpen(false)}
+                className={`px-3.5 py-1.5 text-xs font-semibold ${darkMode ? 'text-slate-400 hover:bg-slate-800' : 'text-slate-500 hover:bg-slate-100'} rounded-xl transition`}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmResetSampleData}
+                className="px-4 py-1.5 text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white rounded-xl transition shadow-sm"
+              >
+                Reset Data
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* FULL RECEIPT VIEWER MODAL */}
       {receiptViewerUrl && (
         <div 
-          className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center p-4 print:hidden" 
+          className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[60] flex items-center justify-center p-4 print:hidden" 
           onClick={() => setReceiptViewerUrl(null)}
         >
           <div className="relative max-w-3xl max-h-[90vh] bg-slate-900 rounded-2xl overflow-hidden p-2 shadow-2xl border border-slate-800" onClick={(e) => e.stopPropagation()}>
