@@ -249,6 +249,7 @@ export default function App() {
   });
   const [selectedYear, setSelectedYear] = useState<string>('ALL');
   const [selectedMonth, setSelectedMonth] = useState<string>('ALL');
+  const [showAll12Months, setShowAll12Months] = useState<boolean>(false);
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [statusFilter, setStatusFilter] = useState<'ALL' | ClaimStatus>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
@@ -517,6 +518,14 @@ export default function App() {
     return { categories, grandTotal };
   }, [profileClaims]);
 
+  // Fiscal Quarters mapping
+  const QUARTERS: Record<string, string[]> = {
+    Q1: ['Jan', 'Feb', 'Mar'],
+    Q2: ['Apr', 'May', 'Jun'],
+    Q3: ['Jul', 'Aug', 'Sep'],
+    Q4: ['Oct', 'Nov', 'Dec']
+  };
+
   // Filter claims based on selected profile, year, month, category, status & search text
   const filteredClaims = useMemo(() => {
     return claims.filter(item => {
@@ -527,7 +536,16 @@ export default function App() {
       const itemMonth = itemDateObj && !isNaN(itemDateObj.getTime()) ? itemDateObj.toLocaleString('en-US', { month: 'short' }) : 'Unknown';
 
       const matchesYear = selectedYear === 'ALL' || itemYear === selectedYear;
-      const matchesMonth = selectedMonth === 'ALL' || itemMonth === selectedMonth;
+      
+      let matchesMonth = false;
+      if (selectedMonth === 'ALL') {
+        matchesMonth = true;
+      } else if (QUARTERS[selectedMonth]) {
+        matchesMonth = QUARTERS[selectedMonth].includes(itemMonth);
+      } else {
+        matchesMonth = itemMonth === selectedMonth;
+      }
+
       const matchesCategory = selectedCategory === 'ALL' || item.category === selectedCategory;
       const matchesStatus = statusFilter === 'ALL' || item.status === statusFilter;
       
@@ -565,6 +583,31 @@ export default function App() {
       return { name: m, count };
     });
   }, [profileClaims, selectedYear]);
+
+  // Contextual months to display in the scrubber bar
+  const scrubberMonths = useMemo(() => {
+    // 1. If a Quarter is selected (Q1, Q2, Q3, Q4), show the 3 months for that quarter
+    if (QUARTERS[selectedMonth]) {
+      const qMonths = QUARTERS[selectedMonth];
+      return availableMonths.filter(m => qMonths.includes(m.name));
+    }
+
+    // 2. If an individual month is selected (e.g. 'Oct')
+    const parentQ = (['Q1', 'Q2', 'Q3', 'Q4'] as const).find(q => QUARTERS[q].includes(selectedMonth));
+    if (parentQ && !showAll12Months) {
+      return availableMonths.filter(m => QUARTERS[parentQ].includes(m.name));
+    }
+
+    // 3. 'ALL' months view:
+    // If showAll12Months is enabled, show all 12 calendar months (Jan - Dec)
+    if (showAll12Months) {
+      return availableMonths;
+    }
+
+    // Otherwise show active months that have claims in the selected year
+    const activeOnly = availableMonths.filter(m => m.count > 0);
+    return activeOnly.length > 0 ? activeOnly : availableMonths;
+  }, [selectedMonth, availableMonths, showAll12Months]);
 
   // Format money helper
   const formatMoney = (val: number | string) => {
@@ -873,43 +916,66 @@ export default function App() {
 
   return (
     <div className={`min-h-screen ${darkMode ? 'dark bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-800'} transition-colors duration-200 font-sans`}>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-3 sm:py-6 pb-24 sm:pb-8">
         
         {/* HEADER & ACCOUNT SWITCHER */}
-        <header className={`flex flex-col lg:flex-row justify-between items-start lg:items-center pb-6 mb-6 border-b ${darkMode ? 'border-slate-800' : 'border-slate-200'} gap-4 print:hidden`}>
-          <div className="flex items-center space-x-3">
-            <div className="p-3 bg-gradient-to-tr from-blue-600 to-indigo-600 text-white rounded-2xl shadow-md shadow-blue-500/20">
-              <Receipt className="w-6 h-6" />
-            </div>
-            <div>
-              <div className="flex items-center space-x-2">
-                <h1 className={`text-2xl font-black tracking-tight ${darkMode ? 'text-white' : 'text-slate-900'}`}>
-                  ClaimSwift
-                </h1>
-                <span className={`text-[10px] font-extrabold uppercase px-2 py-0.5 rounded flex items-center gap-1 ${
-                  storageMode === 'cloud' 
-                    ? 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300' 
-                    : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                }`}>
-                  {storageMode === 'cloud' ? <Database className="w-3 h-3" /> : <HardDrive className="w-3 h-3" />}
-                  {storageMode === 'cloud' ? 'Cloud Sync' : 'Ready'}
-                </span>
+        <header className={`flex flex-col sm:flex-row justify-between items-start sm:items-center pb-4 sm:pb-6 mb-4 sm:mb-6 border-b ${darkMode ? 'border-slate-800' : 'border-slate-200'} gap-3 sm:gap-4 print:hidden`}>
+          <div className="flex items-center justify-between w-full sm:w-auto">
+            <div className="flex items-center space-x-2.5 sm:space-x-3">
+              <div className="p-2 sm:p-3 bg-gradient-to-tr from-blue-600 to-indigo-600 text-white rounded-xl sm:rounded-2xl shadow-md shadow-blue-500/20">
+                <Receipt className="w-5 h-5 sm:w-6 sm:h-6" />
               </div>
-              <p className={`text-xs ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>Corporate Claim Tracker & Gemini Vision Archiver</p>
+              <div>
+                <div className="flex items-center space-x-2">
+                  <h1 className={`text-xl sm:text-2xl font-black tracking-tight ${darkMode ? 'text-white' : 'text-slate-900'}`}>
+                    ClaimSwift
+                  </h1>
+                  <span className={`text-[9px] sm:text-[10px] font-extrabold uppercase px-1.5 sm:px-2 py-0.5 rounded flex items-center gap-1 ${
+                    storageMode === 'cloud' 
+                      ? 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300' 
+                      : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                  }`}>
+                    {storageMode === 'cloud' ? <Database className="w-2.5 h-2.5 sm:w-3 sm:h-3" /> : <HardDrive className="w-2.5 h-2.5 sm:w-3 sm:h-3" />}
+                    <span>{storageMode === 'cloud' ? 'Cloud' : 'Ready'}</span>
+                  </span>
+                </div>
+                <p className={`text-[10px] sm:text-xs ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>Corporate Claim Tracker</p>
+              </div>
+            </div>
+
+            {/* Mobile Header Quick Actions: Currency + Dark Mode in top row */}
+            <div className="flex sm:hidden items-center gap-1.5">
+              <select 
+                value={currency} 
+                onChange={(e) => setCurrency(e.target.value as any)}
+                className={`${darkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-700'} border text-[11px] font-bold rounded-lg px-2 py-1 outline-none shadow-sm`}
+              >
+                <option value="RM">RM</option>
+                <option value="$">$</option>
+                <option value="€">€</option>
+                <option value="£">£</option>
+                <option value="S$">S$</option>
+              </select>
+              <button 
+                onClick={() => setDarkMode(!darkMode)}
+                className={`p-1.5 rounded-lg border ${darkMode ? 'border-slate-700 bg-slate-900 text-amber-300' : 'border-slate-200 bg-white text-slate-600'} shadow-sm`}
+              >
+                {darkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+              </button>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto justify-end">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full sm:w-auto justify-between sm:justify-end">
             {/* Profile Selector */}
-            <div className={`flex items-center ${darkMode ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-200'} border rounded-xl p-1 shadow-sm`}>
-              <div className="px-2.5 py-1 text-slate-400 flex items-center space-x-1">
-                <User className="w-4 h-4" />
-                <span className={`text-xs font-semibold hidden sm:inline ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>Workspace:</span>
+            <div className={`flex items-center flex-1 sm:flex-initial ${darkMode ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-200'} border rounded-xl p-1 shadow-sm`}>
+              <div className="px-2 py-1 text-slate-400 flex items-center space-x-1">
+                <User className="w-3.5 h-3.5" />
+                <span className={`text-xs font-semibold hidden md:inline ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>Workspace:</span>
               </div>
               <select 
                 value={activeProfile}
                 onChange={(e) => setActiveProfile(e.target.value)}
-                className={`bg-transparent text-xs font-bold ${darkMode ? 'text-slate-100' : 'text-slate-800'} pr-2 py-1 outline-none cursor-pointer`}
+                className={`bg-transparent text-xs font-bold ${darkMode ? 'text-slate-100' : 'text-slate-800'} pr-1 py-1 outline-none cursor-pointer flex-1 sm:flex-initial`}
               >
                 {profiles.map(p => (
                   <option key={p} value={p} className={darkMode ? 'bg-slate-900 text-slate-100' : 'bg-white text-slate-800'}>{p}</option>
@@ -918,61 +984,60 @@ export default function App() {
               <button 
                 onClick={() => setIsAddProfileModalOpen(true)}
                 title="Add new colleague profile workspace"
-                className={`p-1 ${darkMode ? 'hover:bg-slate-800 text-slate-400 hover:text-slate-200' : 'hover:bg-slate-100 text-slate-500'} rounded-lg transition ml-1`}
+                className={`p-1 ${darkMode ? 'hover:bg-slate-800 text-slate-400 hover:text-slate-200' : 'hover:bg-slate-100 text-slate-500'} rounded-lg transition`}
               >
                 <Plus className="w-3.5 h-3.5" />
               </button>
             </div>
 
-            {/* Currency selector */}
-            <select 
-              value={currency} 
-              onChange={(e) => setCurrency(e.target.value as any)}
-              className={`${darkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-700'} border text-xs font-bold rounded-xl px-3 py-2 outline-none cursor-pointer shadow-sm`}
-            >
-              <option value="RM" className={darkMode ? 'bg-slate-900 text-slate-100' : 'bg-white text-slate-800'}>RM (MYR)</option>
-              <option value="$" className={darkMode ? 'bg-slate-900 text-slate-100' : 'bg-white text-slate-800'}>$ (USD)</option>
-              <option value="€" className={darkMode ? 'bg-slate-900 text-slate-100' : 'bg-white text-slate-800'}>€ (EUR)</option>
-              <option value="£" className={darkMode ? 'bg-slate-900 text-slate-100' : 'bg-white text-slate-800'}>£ (GBP)</option>
-              <option value="S$" className={darkMode ? 'bg-slate-900 text-slate-100' : 'bg-white text-slate-800'}>S$ (SGD)</option>
-            </select>
-
-            {/* Dark mode */}
-            <button 
-              onClick={() => setDarkMode(!darkMode)}
-              title={darkMode ? "Switch to light mode" : "Switch to dark mode"}
-              className={`p-2.5 rounded-xl border ${darkMode ? 'border-slate-700 bg-slate-900 text-amber-300 hover:bg-slate-800' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-100'} transition shadow-sm`}
-            >
-              {darkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-            </button>
+            {/* Desktop currency & theme buttons */}
+            <div className="hidden sm:flex items-center gap-2">
+              <select 
+                value={currency} 
+                onChange={(e) => setCurrency(e.target.value as any)}
+                className={`${darkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-700'} border text-xs font-bold rounded-xl px-3 py-2 outline-none cursor-pointer shadow-sm`}
+              >
+                <option value="RM">RM (MYR)</option>
+                <option value="$">$ (USD)</option>
+                <option value="€">€ (EUR)</option>
+                <option value="£">£ (GBP)</option>
+                <option value="S$">S$ (SGD)</option>
+              </select>
+              <button 
+                onClick={() => setDarkMode(!darkMode)}
+                className={`p-2.5 rounded-xl border ${darkMode ? 'border-slate-700 bg-slate-900 text-amber-300 hover:bg-slate-800' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-100'} transition shadow-sm`}
+              >
+                {darkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+              </button>
+            </div>
 
             {/* User Session */}
             {user && !user.isAnonymous ? (
-              <div className={`flex items-center space-x-2 ${darkMode ? 'bg-slate-900 border-slate-700 text-blue-300' : 'bg-blue-50 border-blue-200 text-blue-900'} border rounded-xl px-3 py-1.5`}>
+              <div className={`flex items-center space-x-1.5 ${darkMode ? 'bg-slate-900 border-slate-700 text-blue-300' : 'bg-blue-50 border-blue-200 text-blue-900'} border rounded-xl px-2.5 py-1.5`}>
                 <img 
                   src={user.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(user.displayName || user.email || 'U')}&background=2563eb&color=fff`} 
                   alt="User" 
-                  className="w-6 h-6 rounded-full" 
+                  className="w-5 h-5 rounded-full" 
                 />
-                <span className={`text-xs font-semibold ${darkMode ? 'text-slate-200' : 'text-blue-900'} max-w-[110px] truncate`}>{user.displayName || user.email}</span>
-                <button onClick={handleSignOut} title="Sign Out" className={`p-1 ${darkMode ? 'text-slate-400 hover:text-slate-200' : 'text-slate-400 hover:text-slate-600'}`}>
-                  <LogOut className="w-3.5 h-3.5" />
+                <span className={`text-xs font-semibold ${darkMode ? 'text-slate-200' : 'text-blue-900'} max-w-[80px] sm:max-w-[110px] truncate`}>{user.displayName || user.email}</span>
+                <button onClick={handleSignOut} title="Sign Out" className="p-0.5 text-slate-400 hover:text-slate-600">
+                  <LogOut className="w-3 h-3" />
                 </button>
               </div>
             ) : (
               <button 
                 onClick={handleGoogleSignIn}
-                className="flex items-center space-x-1.5 bg-slate-900 hover:bg-black text-white dark:bg-slate-100 dark:hover:bg-white dark:text-slate-900 text-xs font-semibold px-3.5 py-2.5 rounded-xl transition shadow-sm"
+                className="flex items-center space-x-1.5 bg-slate-900 hover:bg-black text-white dark:bg-slate-100 dark:hover:bg-white dark:text-slate-900 text-xs font-semibold px-3 py-2 rounded-xl transition shadow-sm"
               >
                 <LogIn className="w-3.5 h-3.5" />
-                <span>1-Click Login</span>
+                <span>Login</span>
               </button>
             )}
 
-            {/* New Claim button */}
+            {/* Desktop New Claim button */}
             <button 
               onClick={() => handleOpenModal()}
-              className="flex items-center space-x-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-md shadow-blue-500/20 hover:shadow-lg transition transform active:scale-95"
+              className="hidden sm:flex items-center space-x-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-md shadow-blue-500/20 hover:shadow-lg transition transform active:scale-95"
             >
               <Plus className="w-4 h-4" />
               <span>New Claim</span>
@@ -981,11 +1046,11 @@ export default function App() {
         </header>
 
         {/* ACTIVE WORKSPACE NOTICE */}
-        <div className={`mb-6 ${darkMode ? 'bg-blue-950/40 border-blue-900/50' : 'bg-blue-500/10 border-blue-500/20'} border rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 print:hidden`}>
+        <div className={`mb-4 sm:mb-6 ${darkMode ? 'bg-blue-950/40 border-blue-900/50' : 'bg-blue-500/10 border-blue-500/20'} border rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 print:hidden`}>
           <div className="flex items-center space-x-2">
             <Users className={`w-4 h-4 ${darkMode ? 'text-blue-400' : 'text-blue-600'}`} />
             <p className={`text-xs font-medium ${darkMode ? 'text-slate-300' : 'text-slate-700'}`}>
-              Active Workspace Profile: <strong className={`${darkMode ? 'text-blue-400' : 'text-blue-600'} font-bold`}>{activeProfile}</strong>
+              Workspace: <strong className={`${darkMode ? 'text-blue-400' : 'text-blue-600'} font-bold`}>{activeProfile}</strong>
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -994,7 +1059,7 @@ export default function App() {
               className={`text-[11px] font-semibold ${darkMode ? 'text-blue-400 hover:text-blue-300' : 'text-blue-600 hover:text-blue-700'} hover:underline flex items-center gap-1`}
             >
               <PieChartIcon className="w-3.5 h-3.5" />
-              <span>{showCharts ? "Hide Visual Charts" : "Show Category Charts"}</span>
+              <span>{showCharts ? "Hide Charts" : "Show Charts"}</span>
             </button>
             <button 
               onClick={handleResetSampleData}
@@ -1003,67 +1068,66 @@ export default function App() {
               Reset Samples
             </button>
             <span className={`text-[11px] font-semibold ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-              {profileClaims.length} items logged
+              {profileClaims.length} items
             </span>
           </div>
         </div>
 
-        {/* DASHBOARD SUMMARY STATS */}
-        <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6 print:hidden">
+        {/* DASHBOARD SUMMARY STATS (Responsive 2x2 grid on mobile, 4 columns on desktop) */}
+        <section className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4 mb-4 sm:mb-6 print:hidden">
           {/* Box 1: Yet to Submit */}
-          <div className={`${darkMode ? 'bg-slate-900 border-amber-900/40' : 'bg-white border-amber-200'} rounded-2xl p-5 border shadow-sm relative overflow-hidden transition-colors`}>
-            <div className="absolute top-0 right-0 w-2 h-full bg-amber-500"></div>
+          <div className={`${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'} rounded-2xl p-3.5 sm:p-5 border shadow-sm transition-colors`}>
             <div className="flex items-center justify-between">
-              <span className={`text-xs font-bold uppercase tracking-wider ${darkMode ? 'text-amber-400' : 'text-amber-600'}`}>Yet to Submit</span>
-              <span className={`p-2 ${darkMode ? 'bg-amber-950/60 text-amber-400' : 'bg-amber-50 text-amber-600'} rounded-xl`}>
-                <AlertCircle className="w-5 h-5" />
+              <span className={`text-[11px] sm:text-xs font-bold uppercase tracking-wider ${darkMode ? 'text-amber-400' : 'text-amber-600'}`}>Yet to Submit</span>
+              <span className={`p-1.5 sm:p-2 ${darkMode ? 'bg-amber-950/60 text-amber-400' : 'bg-amber-50 text-amber-600'} rounded-xl`}>
+                <AlertCircle className="w-4 h-4 sm:w-5 sm:h-5" />
               </span>
             </div>
-            <div className="mt-3">
-              <div className={`text-3xl font-black ${darkMode ? 'text-white' : 'text-slate-900'}`}>{formatMoney(stats.unsubmittedAmt)}</div>
-              <p className={`text-xs ${darkMode ? 'text-slate-400' : 'text-slate-500'} mt-1`}>{stats.unsubmittedCount} receipts waiting in pocket</p>
+            <div className="mt-2 sm:mt-3">
+              <div className={`text-lg sm:text-3xl font-black ${darkMode ? 'text-white' : 'text-slate-900'}`}>{formatMoney(stats.unsubmittedAmt)}</div>
+              <p className={`text-[10px] sm:text-xs ${darkMode ? 'text-slate-400' : 'text-slate-500'} mt-0.5 sm:mt-1 truncate`}>{stats.unsubmittedCount} receipts in pocket</p>
             </div>
           </div>
 
           {/* Box 2: Pending HR/Finance */}
-          <div className={`${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'} rounded-2xl p-5 border shadow-sm transition-colors`}>
+          <div className={`${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'} rounded-2xl p-3.5 sm:p-5 border shadow-sm transition-colors`}>
             <div className="flex items-center justify-between">
-              <span className={`text-xs font-bold uppercase tracking-wider ${darkMode ? 'text-blue-400' : 'text-blue-600'}`}>Pending HR/Finance</span>
-              <span className={`p-2 ${darkMode ? 'bg-blue-950/60 text-blue-400' : 'bg-blue-50 text-blue-600'} rounded-xl`}>
-                <Clock className="w-5 h-5" />
+              <span className={`text-[11px] sm:text-xs font-bold uppercase tracking-wider ${darkMode ? 'text-blue-400' : 'text-blue-600'}`}>Pending</span>
+              <span className={`p-1.5 sm:p-2 ${darkMode ? 'bg-blue-950/60 text-blue-400' : 'bg-blue-50 text-blue-600'} rounded-xl`}>
+                <Clock className="w-4 h-4 sm:w-5 sm:h-5" />
               </span>
             </div>
-            <div className="mt-3">
-              <div className={`text-3xl font-black ${darkMode ? 'text-white' : 'text-slate-900'}`}>{formatMoney(stats.pendingAmt)}</div>
-              <p className={`text-xs ${darkMode ? 'text-slate-400' : 'text-slate-500'} mt-1`}>{stats.pendingCount} claims submitted</p>
+            <div className="mt-2 sm:mt-3">
+              <div className={`text-lg sm:text-3xl font-black ${darkMode ? 'text-white' : 'text-slate-900'}`}>{formatMoney(stats.pendingAmt)}</div>
+              <p className={`text-[10px] sm:text-xs ${darkMode ? 'text-slate-400' : 'text-slate-500'} mt-0.5 sm:mt-1 truncate`}>{stats.pendingCount} submitted</p>
             </div>
           </div>
 
           {/* Box 3: Reimbursed */}
-          <div className={`${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'} rounded-2xl p-5 border shadow-sm transition-colors`}>
+          <div className={`${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'} rounded-2xl p-3.5 sm:p-5 border shadow-sm transition-colors`}>
             <div className="flex items-center justify-between">
-              <span className={`text-xs font-bold uppercase tracking-wider ${darkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>Reimbursed</span>
-              <span className={`p-2 ${darkMode ? 'bg-emerald-950/60 text-emerald-400' : 'bg-emerald-50 text-emerald-600'} rounded-xl`}>
-                <CheckCircle2 className="w-5 h-5" />
+              <span className={`text-[11px] sm:text-xs font-bold uppercase tracking-wider ${darkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>Reimbursed</span>
+              <span className={`p-1.5 sm:p-2 ${darkMode ? 'bg-emerald-950/60 text-emerald-400' : 'bg-emerald-50 text-emerald-600'} rounded-xl`}>
+                <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5" />
               </span>
             </div>
-            <div className="mt-3">
-              <div className={`text-3xl font-black ${darkMode ? 'text-white' : 'text-slate-900'}`}>{formatMoney(stats.paidAmt)}</div>
-              <p className={`text-xs ${darkMode ? 'text-slate-400' : 'text-slate-500'} mt-1`}>{stats.paidCount} claims settled</p>
+            <div className="mt-2 sm:mt-3">
+              <div className={`text-lg sm:text-3xl font-black ${darkMode ? 'text-white' : 'text-slate-900'}`}>{formatMoney(stats.paidAmt)}</div>
+              <p className={`text-[10px] sm:text-xs ${darkMode ? 'text-slate-400' : 'text-slate-500'} mt-0.5 sm:mt-1 truncate`}>{stats.paidCount} settled</p>
             </div>
           </div>
 
           {/* Box 4: All Time Claims */}
-          <div className={`${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'} rounded-2xl p-5 border shadow-sm transition-colors`}>
+          <div className={`${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'} rounded-2xl p-3.5 sm:p-5 border shadow-sm transition-colors`}>
             <div className="flex items-center justify-between">
-              <span className={`text-xs font-bold uppercase tracking-wider ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>All Time Claims</span>
-              <span className={`p-2 ${darkMode ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-600'} rounded-xl`}>
-                <Wallet className="w-5 h-5" />
+              <span className={`text-[11px] sm:text-xs font-bold uppercase tracking-wider ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>All Time</span>
+              <span className={`p-1.5 sm:p-2 ${darkMode ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-600'} rounded-xl`}>
+                <Wallet className="w-4 h-4 sm:w-5 sm:h-5" />
               </span>
             </div>
-            <div className="mt-3">
-              <div className={`text-3xl font-black ${darkMode ? 'text-white' : 'text-slate-900'}`}>{formatMoney(stats.totalAmt)}</div>
-              <p className={`text-xs ${darkMode ? 'text-slate-400' : 'text-slate-500'} mt-1`}>{stats.totalCount} total claims logged</p>
+            <div className="mt-2 sm:mt-3">
+              <div className={`text-lg sm:text-3xl font-black ${darkMode ? 'text-white' : 'text-slate-900'}`}>{formatMoney(stats.totalAmt)}</div>
+              <p className={`text-[10px] sm:text-xs ${darkMode ? 'text-slate-400' : 'text-slate-500'} mt-0.5 sm:mt-1 truncate`}>{stats.totalCount} total logged</p>
             </div>
           </div>
         </section>
@@ -1186,101 +1250,210 @@ export default function App() {
         )}
 
         {/* MONTH, YEAR & EXPORT CONTROLS */}
-        <div className="flex flex-col lg:flex-row justify-between items-stretch lg:items-center mb-6 gap-4 print:hidden">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className={`flex items-center ${darkMode ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-200'} border rounded-xl px-3 py-1.5 shadow-sm`}>
-              <Calendar className="w-4 h-4 text-slate-400 mr-2" />
-              <span className={`text-xs font-semibold ${darkMode ? 'text-slate-400' : 'text-slate-500'} mr-1.5`}>Year:</span>
-              <select 
-                value={selectedYear}
-                onChange={(e) => {
-                  setSelectedYear(e.target.value);
-                  setSelectedMonth('ALL');
-                }}
-                className={`bg-transparent text-xs font-bold ${darkMode ? 'text-slate-100' : 'text-slate-800'} outline-none cursor-pointer`}
+        <div className="flex flex-col gap-3 mb-6 print:hidden">
+          {/* Top Control Bar */}
+          <div className="flex flex-col lg:flex-row justify-between items-stretch lg:items-center gap-3">
+            {/* Year & Month Dropdown Card (Ultra-responsive for mobile/desktop) */}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className={`flex items-center ${darkMode ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-200'} border rounded-xl px-3 py-1.5 shadow-sm divide-x ${darkMode ? 'divide-slate-700' : 'divide-slate-200'}`}>
+                {/* Year Select */}
+                <div className="flex items-center pr-2.5">
+                  <Calendar className="w-4 h-4 text-slate-400 mr-2" />
+                  <span className={`text-xs font-semibold ${darkMode ? 'text-slate-400' : 'text-slate-500'} mr-1.5`}>Year:</span>
+                  <select 
+                    value={selectedYear}
+                    onChange={(e) => {
+                      setSelectedYear(e.target.value);
+                      setSelectedMonth('ALL');
+                    }}
+                    className={`bg-transparent text-xs font-bold ${darkMode ? 'text-slate-100' : 'text-slate-800'} outline-none cursor-pointer`}
+                  >
+                    <option value="ALL" className={darkMode ? 'bg-slate-900 text-slate-100' : 'bg-white text-slate-800'}>All Years</option>
+                    {yearList.map(y => (
+                      <option key={y} value={y} className={darkMode ? 'bg-slate-900 text-slate-100' : 'bg-white text-slate-800'}>{y}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Direct Month Dropdown (Guarantees all 12 months are accessible on ANY screen) */}
+                <div className="flex items-center pl-2.5">
+                  <span className={`text-xs font-semibold ${darkMode ? 'text-slate-400' : 'text-slate-500'} mr-1.5`}>Month:</span>
+                  <select 
+                    value={selectedMonth}
+                    onChange={(e) => setSelectedMonth(e.target.value)}
+                    className={`bg-transparent text-xs font-bold ${darkMode ? 'text-slate-100' : 'text-slate-800'} outline-none cursor-pointer`}
+                  >
+                    <option value="ALL" className={darkMode ? 'bg-slate-900 text-slate-100' : 'bg-white text-slate-800'}>All Months</option>
+                    <optgroup label="Fiscal Quarters" className={darkMode ? 'bg-slate-900 text-slate-300' : 'bg-white text-slate-700'}>
+                      <option value="Q1">Q1 (Jan - Mar)</option>
+                      <option value="Q2">Q2 (Apr - Jun)</option>
+                      <option value="Q3">Q3 (Jul - Sep)</option>
+                      <option value="Q4">Q4 (Oct - Dec)</option>
+                    </optgroup>
+                    <optgroup label="Calendar Months" className={darkMode ? 'bg-slate-900 text-slate-300' : 'bg-white text-slate-700'}>
+                      {availableMonths.map(m => (
+                        <option key={m.name} value={m.name}>
+                          {m.name} {m.count > 0 ? `(${m.count})` : ''}
+                        </option>
+                      ))}
+                    </optgroup>
+                  </select>
+                </div>
+              </div>
+
+              {/* Toggle to switch between Active Months Only vs All 12 Months Strip */}
+              <button
+                onClick={() => setShowAll12Months(!showAll12Months)}
+                className={`text-xs px-2.5 py-1.5 rounded-xl border transition flex items-center gap-1.5 font-semibold ${
+                  showAll12Months
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : darkMode
+                      ? 'bg-slate-900 border-slate-700 text-slate-400 hover:text-slate-200'
+                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                }`}
+                title="Toggle between showing only months with claims vs all 12 calendar months"
               >
-                <option value="ALL" className={darkMode ? 'bg-slate-900 text-slate-100' : 'bg-white text-slate-800'}>All Years</option>
-                {yearList.map(y => (
-                  <option key={y} value={y} className={darkMode ? 'bg-slate-900 text-slate-100' : 'bg-white text-slate-800'}>{y}</option>
-                ))}
-              </select>
+                <Calendar className="w-3.5 h-3.5" />
+                <span>{showAll12Months ? 'Show Active Only' : 'Show All 12 Months'}</span>
+              </button>
             </div>
 
-            <div className="flex items-center space-x-1 overflow-x-auto pb-1 lg:pb-0 scrollbar-none max-w-full">
-              <button
-                onClick={() => setSelectedMonth('ALL')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition ${
-                  selectedMonth === 'ALL'
-                    ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
-                    : darkMode
-                      ? 'bg-slate-900 text-slate-300 hover:bg-slate-800 border border-slate-800'
-                      : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-                }`}
+            {/* Search, Status & Export buttons */}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative flex-1 sm:w-52">
+                <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input 
+                  type="text" 
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search merchant, notes..." 
+                  className={`w-full ${darkMode ? 'bg-slate-900 border-slate-700 text-slate-100 placeholder:text-slate-500' : 'bg-white border-slate-200 text-slate-800 placeholder:text-slate-400'} border text-xs rounded-xl pl-9 pr-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm`}
+                />
+              </div>
+
+              <select 
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as any)}
+                className={`${darkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-800'} border text-xs font-medium rounded-xl px-3 py-2 outline-none shadow-sm cursor-pointer`}
               >
-                All Months
+                <option value="ALL" className={darkMode ? 'bg-slate-900 text-slate-100' : 'bg-white text-slate-800'}>All Statuses</option>
+                <option value="UNSUBMITTED" className={darkMode ? 'bg-slate-900 text-slate-100' : 'bg-white text-slate-800'}>Unsubmitted</option>
+                <option value="SUBMITTED" className={darkMode ? 'bg-slate-900 text-slate-100' : 'bg-white text-slate-800'}>Submitted</option>
+                <option value="PAID" className={darkMode ? 'bg-slate-900 text-slate-100' : 'bg-white text-slate-800'}>Reimbursed</option>
+              </select>
+
+              {/* EXCEL / CSV EXPORT BUTTON */}
+              <button 
+                onClick={handleExportCSV}
+                title="Export all filtered claims to Excel-compatible CSV file"
+                className="flex items-center space-x-1.5 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold px-3.5 py-2 rounded-xl transition shadow-sm"
+              >
+                <FileSpreadsheet className="w-4 h-4" />
+                <span>Export CSV</span>
               </button>
-              
-              {availableMonths.filter(m => m.count > 0).map(m => (
+
+              {/* PRINT / PDF REPORT */}
+              <button 
+                onClick={handleExportReport}
+                className={`flex items-center space-x-1.5 ${darkMode ? 'bg-slate-800 hover:bg-slate-750 text-slate-100' : 'bg-slate-800 hover:bg-slate-900 text-white'} text-xs font-bold px-3.5 py-2 rounded-xl transition shadow-sm`}
+              >
+                <Printer className="w-4 h-4" />
+                <span className="hidden sm:inline">PDF Report</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Interactive Timeline Pill Scrubber Bar (Fits All 12 Months + Quarters) */}
+          <div className={`flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none p-1.5 rounded-2xl ${darkMode ? 'bg-slate-900/60 border border-slate-800' : 'bg-slate-100/80 border border-slate-200/80'}`}>
+            {/* All Months button */}
+            <button
+              onClick={() => setSelectedMonth('ALL')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition ${
+                selectedMonth === 'ALL'
+                  ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
+                  : darkMode
+                    ? 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                    : 'bg-white text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              All Months
+            </button>
+
+            {/* Quarter Jumpers (Q1 - Q4) */}
+            <div className={`flex items-center gap-1 pl-1 pr-1 border-x ${darkMode ? 'border-slate-800' : 'border-slate-300'}`}>
+              {(['Q1', 'Q2', 'Q3', 'Q4'] as const).map(q => {
+                const isSelected = selectedMonth === q;
+                const qMonths = QUARTERS[q];
+                const qCount = availableMonths.filter(m => qMonths.includes(m.name)).reduce((sum, m) => sum + m.count, 0);
+
+                return (
+                  <button
+                    key={q}
+                    onClick={() => setSelectedMonth(isSelected ? 'ALL' : q)}
+                    title={`Filter ${q} (${qMonths.join(', ')}) • ${qCount} claim${qCount === 1 ? '' : 's'}`}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                      isSelected
+                        ? 'bg-indigo-600 text-white shadow-sm ring-2 ring-indigo-400/40'
+                        : darkMode
+                          ? 'bg-slate-800/80 text-slate-400 hover:text-slate-200 hover:bg-slate-700'
+                          : 'bg-white text-slate-500 hover:text-slate-800 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span>{q}</span>
+                    {qCount > 0 ? (
+                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                        isSelected ? 'bg-indigo-800 text-white' : 'bg-blue-600 text-white'
+                      }`}>
+                        {qCount}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] opacity-40">0</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Contextual Month Buttons (Scoped to selected Quarter, or all active months) */}
+            {scrubberMonths.map(m => {
+              const isSelected = selectedMonth === m.name;
+              const hasClaims = m.count > 0;
+
+              return (
                 <button
                   key={m.name}
-                  onClick={() => setSelectedMonth(m.name)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition ${
-                    selectedMonth === m.name
+                  onClick={() => setSelectedMonth(isSelected ? 'ALL' : m.name)}
+                  title={`${m.name}: ${m.count} claim${m.count === 1 ? '' : 's'}`}
+                  className={`px-2.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition flex items-center gap-1.5 ${
+                    isSelected
                       ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
-                      : darkMode
-                        ? 'bg-slate-900 text-slate-300 hover:bg-slate-800 border border-slate-800'
-                        : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+                      : hasClaims
+                        ? darkMode
+                          ? 'bg-slate-800 text-slate-200 hover:bg-slate-700 border border-slate-700'
+                          : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-200 shadow-sm'
+                        : darkMode
+                          ? 'bg-slate-900/40 text-slate-500 hover:text-slate-300 border border-slate-800/60'
+                          : 'bg-slate-50 text-slate-400 hover:text-slate-600 border border-slate-200/50'
                   }`}
                 >
-                  {m.name} <span className="opacity-75 font-normal">({m.count})</span>
+                  <span>{m.name}</span>
+                  {hasClaims ? (
+                    <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                      isSelected 
+                        ? 'bg-blue-700 text-white' 
+                        : 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300'
+                    }`}>
+                      {m.count}
+                    </span>
+                  ) : (
+                    <span className="text-[10px] opacity-40">0</span>
+                  )}
                 </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="relative flex-1 sm:w-56">
-              <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input 
-                type="text" 
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search merchant, notes..." 
-                className={`w-full ${darkMode ? 'bg-slate-900 border-slate-700 text-slate-100 placeholder:text-slate-500' : 'bg-white border-slate-200 text-slate-800 placeholder:text-slate-400'} border text-xs rounded-xl pl-9 pr-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm`}
-              />
-            </div>
-
-            <select 
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as any)}
-              className={`${darkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-800'} border text-xs font-medium rounded-xl px-3 py-2 outline-none shadow-sm cursor-pointer`}
-            >
-              <option value="ALL" className={darkMode ? 'bg-slate-900 text-slate-100' : 'bg-white text-slate-800'}>All Statuses</option>
-              <option value="UNSUBMITTED" className={darkMode ? 'bg-slate-900 text-slate-100' : 'bg-white text-slate-800'}>Unsubmitted</option>
-              <option value="SUBMITTED" className={darkMode ? 'bg-slate-900 text-slate-100' : 'bg-white text-slate-800'}>Submitted</option>
-              <option value="PAID" className={darkMode ? 'bg-slate-900 text-slate-100' : 'bg-white text-slate-800'}>Reimbursed</option>
-            </select>
-
-            {/* EXCEL / CSV EXPORT BUTTON */}
-            <button 
-              onClick={handleExportCSV}
-              title="Export all filtered claims to Excel-compatible CSV file"
-              className="flex items-center space-x-1.5 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold px-3.5 py-2 rounded-xl transition shadow-sm"
-            >
-              <FileSpreadsheet className="w-4 h-4" />
-              <span>Export CSV</span>
-            </button>
-
-            {/* PRINT / PDF REPORT */}
-            <button 
-              onClick={handleExportReport}
-              className={`flex items-center space-x-1.5 ${darkMode ? 'bg-slate-800 hover:bg-slate-750 text-slate-100' : 'bg-slate-800 hover:bg-slate-900 text-white'} text-xs font-bold px-3.5 py-2 rounded-xl transition shadow-sm`}
-            >
-              <Printer className="w-4 h-4" />
-              <span className="hidden sm:inline">PDF Report</span>
-            </button>
+              );
+            })}
           </div>
         </div>
+
 
         {/* CLAIMS LIST */}
         <div className={`${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'} rounded-2xl shadow-sm border overflow-hidden print:hidden transition-colors`}>
@@ -1292,15 +1465,39 @@ export default function App() {
           ) : filteredClaims.length === 0 ? (
             <div className="p-12 text-center text-slate-400">
               <Receipt className={`w-12 h-12 mx-auto mb-3 ${darkMode ? 'text-slate-700' : 'text-slate-300'} stroke-[1.5]`} />
-              <p className={`text-sm font-semibold ${darkMode ? 'text-slate-300' : 'text-slate-700'}`}>No claim items found</p>
-              <p className="text-xs text-slate-400 mt-1">Try adding a new expense for {activeProfile} or clearing filters</p>
-              <button
-                onClick={() => handleOpenModal()}
-                className="mt-4 inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                Add First Claim
-              </button>
+              <p className={`text-sm font-semibold ${darkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+                No claim items found {selectedMonth !== 'ALL' ? `for ${QUARTERS[selectedMonth] ? `${selectedMonth} (${QUARTERS[selectedMonth].join(', ')})` : selectedMonth}` : ''}
+              </p>
+              <p className="text-xs text-slate-400 mt-1">
+                {selectedMonth !== 'ALL' || selectedYear !== 'ALL' || statusFilter !== 'ALL' || searchQuery
+                  ? "There are no expenses logged matching your active filters."
+                  : `Try adding a new expense for ${activeProfile}`}
+              </p>
+              <div className="flex flex-wrap items-center justify-center gap-2 mt-4">
+                <button
+                  onClick={() => handleOpenModal()}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition shadow-sm"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>New Claim</span>
+                </button>
+                {(selectedMonth !== 'ALL' || selectedYear !== 'ALL' || statusFilter !== 'ALL' || searchQuery) && (
+                  <button
+                    onClick={() => {
+                      setSelectedMonth('ALL');
+                      setSelectedYear('ALL');
+                      setStatusFilter('ALL');
+                      setSearchQuery('');
+                      setSelectedCategory('ALL');
+                    }}
+                    className={`inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-xl border transition ${
+                      darkMode ? 'bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-750' : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200'
+                    }`}
+                  >
+                    <span>Clear Filter (Show All)</span>
+                  </button>
+                )}
+              </div>
             </div>
           ) : (
             <div className={`divide-y ${darkMode ? 'divide-slate-800/80' : 'divide-slate-100'}`}>
@@ -1479,10 +1676,20 @@ export default function App() {
 
       </div>
 
-      {/* CREATE / EDIT CLAIM MODAL */}
+      {/* MOBILE FLOATING ACTION BUTTON (FAB) FOR INSTANT 1-THUMB RECEIPT ADDING */}
+      <button
+        onClick={() => handleOpenModal()}
+        className="sm:hidden fixed bottom-6 right-5 z-40 bg-gradient-to-tr from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white p-4 rounded-full shadow-2xl shadow-blue-500/50 flex items-center justify-center transform active:scale-90 transition print:hidden"
+        title="Add New Expense Claim"
+        aria-label="Add New Expense Claim"
+      >
+        <Plus className="w-6 h-6 stroke-[3]" />
+      </button>
+
+      {/* CREATE / EDIT CLAIM MODAL (Mobile Bottom Sheet / Desktop Centered) */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-slate-950/75 backdrop-blur-sm z-50 flex items-center justify-center p-4 print:hidden">
-          <div className={`${darkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-800'} rounded-3xl max-w-lg w-full max-h-[90vh] overflow-y-auto shadow-2xl border flex flex-col`}>
+        <div className="fixed inset-0 bg-slate-950/75 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 print:hidden">
+          <div className={`${darkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-800'} rounded-t-3xl sm:rounded-3xl max-w-lg w-full max-h-[92vh] overflow-y-auto shadow-2xl border flex flex-col`}>
             <div className={`p-5 border-b ${darkMode ? 'border-slate-800 bg-slate-900' : 'border-slate-100 bg-white'} flex justify-between items-center sticky top-0 z-10`}>
               <h3 className={`text-base font-bold ${darkMode ? 'text-white' : 'text-slate-900'}`}>
                 {editingClaim ? 'Edit Expense Claim' : `Add Claim for ${activeProfile}`}
