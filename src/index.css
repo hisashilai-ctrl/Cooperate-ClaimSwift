@@ -36,5 +36,6 @@ html.dark body {
 
 /* Safe area padding for mobile notch and status bar */
 .safe-padding-top {
-  padding-top: max(1.25rem, env(safe-area-inset-top, 24px));
+  padding-top: 2.25rem;
+  padding-top: calc(1.75rem + env(safe-area-inset-top, 0px));
 }

@@ -1264,7 +1264,7 @@ export default function App() {
 
   return (
     <div className={`min-h-screen ${darkMode ? 'dark bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-800'} transition-colors duration-200 font-sans`}>
-      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 pt-5 sm:pt-6 pb-24 sm:pb-8 safe-padding-top">
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 pt-8 sm:pt-8 pb-24 sm:pb-8 safe-padding-top">
         
         {/* HEADER & GLOBAL CONTROLS */}
         <header className={`flex items-center justify-between pb-3.5 mb-4 border-b ${darkMode ? 'border-slate-800' : 'border-slate-200'} gap-2 print:hidden`}>
