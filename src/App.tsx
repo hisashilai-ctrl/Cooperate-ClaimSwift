@@ -6,8 +6,12 @@ import {
   signInAnonymously, 
   GoogleAuthProvider, 
   signInWithPopup, 
+  signInWithRedirect,
+  getRedirectResult,
   signOut, 
   onAuthStateChanged,
+  setPersistence,
+  browserLocalPersistence,
   type Auth,
   type User as FirebaseUser
 } from 'firebase/auth';
@@ -551,8 +555,6 @@ export default function App() {
 
           if (window.__initial_auth_token) {
             await signInWithCustomToken(auth, window.__initial_auth_token);
-          } else {
-            await signInAnonymously(auth);
           }
 
           onAuthStateChanged(auth, (currentUser: FirebaseUser | null) => {
@@ -568,6 +570,24 @@ export default function App() {
               setUser(null);
             }
           });
+
+          // Handle Redirect Result
+          try {
+            const result = await getRedirectResult(auth);
+            if (result && result.user) {
+              // User is signed in via redirect
+              setUser({
+                uid: result.user.uid,
+                displayName: result.user.displayName,
+                email: result.user.email,
+                photoURL: result.user.photoURL,
+                isAnonymous: false
+              });
+              showToast(`Successfully logged in via redirect`, 'success');
+            }
+          } catch (error) {
+            console.warn("Redirect result error:", error);
+          }
 
           const appId = window.__app_id || 'claimswift-app';
           const claimsColRef = collection(db, 'artifacts', appId, 'claims');
@@ -626,32 +646,15 @@ export default function App() {
   const handleGoogleSignIn = async () => {
     if (authInstance) {
       try {
+        await setPersistence(authInstance, browserLocalPersistence);
         const provider = new GoogleAuthProvider();
-        const res = await signInWithPopup(authInstance, provider);
-        if (res.user) {
-          setUser({
-            uid: res.user.uid,
-            displayName: res.user.displayName,
-            email: res.user.email,
-            photoURL: res.user.photoURL,
-            isAnonymous: false
-          });
-          showToast(`Logged in as ${res.user.displayName || res.user.email}`, 'success');
-          return;
-        }
+        // Use redirect instead of popup for better mobile compatibility
+        await signInWithRedirect(authInstance, provider);
       } catch (error) {
-        console.warn("Google popup sign-in fallback:", error);
+        console.warn("Google redirect sign-in failed:", error);
+        showToast("Google sign-in failed, please try again.", 'error');
       }
     }
-    // Reliable Google session fallback
-    setUser({
-      uid: 'google-user-hisashi',
-      displayName: 'Hisashi Lai',
-      email: 'hisashi.lai@gmail.com',
-      photoURL: 'https://ui-avatars.com/api/?name=Hisashi+Lai&background=2563eb&color=fff&bold=true',
-      isAnonymous: false
-    });
-    showToast("Signed in as Hisashi Lai (hisashi.lai@gmail.com)", 'success');
   };
 
   // Google Sign-Out Handler
@@ -971,9 +974,10 @@ export default function App() {
 
       showToast("Downloaded receipt image to device", 'success');
     } catch (err) {
-      console.warn("Could not download receipt directly, opening viewer fallback:", err);
+      console.error("Download failed:", err);
+      showToast("Download failed. Long-press the receipt image to save manually.", 'error');
+      // Set the viewer to force open if download fails so they can at least long-press save
       setReceiptViewerUrl(item.receipt);
-      showToast("Opened receipt preview - long press image to Save to Photos", 'info');
     }
   };
 
@@ -1264,10 +1268,10 @@ export default function App() {
 
   return (
     <div className={`min-h-screen ${darkMode ? 'dark bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-800'} transition-colors duration-200 font-sans`}>
-      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 pt-8 sm:pt-8 pb-24 sm:pb-8 safe-padding-top">
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 pt-4 sm:pt-6 pb-24 sm:pb-8 safe-padding-top">
         
         {/* HEADER & GLOBAL CONTROLS */}
-        <header className={`flex items-center justify-between pb-3.5 mb-4 border-b ${darkMode ? 'border-slate-800' : 'border-slate-200'} gap-2 print:hidden`}>
+        <header className={`flex items-center justify-between pb-3.5 mb-4 border-b ${darkMode ? 'border-slate-800' : 'border-slate-200'} gap-2 print:hidden safe-padding-top`}>
           {/* App Identity */}
           <div className="flex flex-col flex-shrink-0">
             <div className="flex items-center space-x-1.5 sm:space-x-2">
@@ -2189,7 +2193,7 @@ export default function App() {
                     <input 
                       type="file" 
                       id="galleryFileInput" 
-                      accept="image/*,image/png,image/jpeg,image/heic,image/heif" 
+                      accept="image/*" 
                       onChange={handleFileChange} 
                       className="hidden" 
                     />
@@ -2931,8 +2935,8 @@ export default function App() {
                             </span>
                           </div>
 
-                          {/* Hover action overlay */}
-                          <div className="absolute inset-0 bg-slate-950/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 p-2">
+                          {/* Always visible action buttons for mobile */}
+                          <div className="absolute bottom-0 left-0 right-0 bg-slate-950/80 backdrop-blur-sm p-2 flex items-center justify-center gap-2">
                             <button
                               type="button"
                               onClick={() => setReceiptViewerUrl(item.receipt!)}
@@ -2941,6 +2945,14 @@ export default function App() {
                             >
                               <Eye className="w-3.5 h-3.5" />
                               <span>View</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => downloadReceipt(item)}
+                              className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition shadow-lg"
+                              title="Save to Gallery"
+                            >
+                              <Download className="w-4 h-4" />
                             </button>
                             <button
                               type="button"
