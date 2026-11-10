@@ -1,0 +1,6 @@
+{
+  "name": "ClaimSwift - Corporate Expense Tracker",
+  "description": "Multi-user corporate expense tracker and receipt archiver with AI scanning, multi-profile support, and status workflow.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
