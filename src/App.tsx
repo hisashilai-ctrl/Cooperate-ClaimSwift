@@ -249,6 +249,8 @@ export default function App() {
   const [activeProfile, setActiveProfile] = useState<string>('Andrew (Self)');
 
   // Claims state
+
+  // Claims state
   const [claims, setClaims] = useState<Claim[]>(loadLocalClaims);
   const [loadingClaims, setLoadingClaims] = useState(false);
 
@@ -663,6 +665,7 @@ export default function App() {
 
     initSupabase();
   }, []);
+
 
   // Google Sign-In Handler
   const handleGoogleSignIn = async () => {
@@ -1333,10 +1336,10 @@ export default function App() {
 
   return (
     <div className={`min-h-screen ${darkMode ? 'dark bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-800'} transition-colors duration-200 font-sans`}>
-      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 pt-4 sm:pt-6 pb-24 sm:pb-8 safe-padding-top">
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 pt-1 sm:pt-2 pb-24 sm:pb-8">
         
         {/* HEADER & GLOBAL CONTROLS */}
-        <header className={`flex items-center justify-between pb-3.5 mb-4 border-b ${darkMode ? 'border-slate-800' : 'border-slate-200'} gap-2 print:hidden safe-padding-top`}>
+        <header className={`flex items-center justify-between pb-2 mb-2 border-b ${darkMode ? 'border-slate-800' : 'border-slate-200'} gap-2 print:hidden safe-padding-top`}>
           {/* App Identity */}
           <div className="flex flex-col flex-shrink-0">
             <div className="flex items-center space-x-1.5 sm:space-x-2">
@@ -3110,6 +3113,7 @@ export default function App() {
           </div>
         </div>
       )}
+
 
       {/* TOAST FEEDBACK NOTIFICATION */}
       {toastMessage && (
