@@ -1,32 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { initializeApp, getApps, type FirebaseApp } from 'firebase/app';
-import { 
-  getAuth, 
-  signInWithCustomToken, 
-  signInAnonymously, 
-  GoogleAuthProvider, 
-  signInWithPopup, 
-  signInWithRedirect,
-  getRedirectResult,
-  signOut, 
-  onAuthStateChanged,
-  setPersistence,
-  browserLocalPersistence,
-  type Auth,
-  type User as FirebaseUser
-} from 'firebase/auth';
-import { 
-  getFirestore, 
-  collection, 
-  onSnapshot, 
-  addDoc, 
-  updateDoc, 
-  deleteDoc, 
-  doc,
-  getDocFromServer,
-  type Firestore
-} from 'firebase/firestore';
-import firebaseConfig from '../firebase-applet-config.json';
+import { supabase, isSupabaseConfigured } from './lib/supabase';
 import { 
   Receipt, 
   Plus, 
@@ -84,6 +57,7 @@ export interface Claim {
   receipt?: string | null;
   createdAt?: string;
   updatedAt?: string;
+  userId?: string;
 }
 
 interface UserProfile {
@@ -91,7 +65,6 @@ interface UserProfile {
   displayName: string | null;
   email: string | null;
   photoURL: string | null;
-  isAnonymous: boolean;
 }
 
 // Category palette
@@ -104,14 +77,6 @@ const CATEGORY_COLORS: Record<string, { bg: string; fill: string; text: string; 
   'Hotel / Lodging': { bg: 'bg-indigo-100 dark:bg-indigo-950/60', fill: 'fill-indigo-500', text: 'text-indigo-700 dark:text-indigo-400', hex: '#6366f1' },
   'Other': { bg: 'bg-slate-100 dark:bg-slate-800', fill: 'fill-slate-500', text: 'text-slate-700 dark:text-slate-300', hex: '#64748b' },
 };
-
-declare global {
-  interface Window {
-    __firebase_config?: string;
-    __app_id?: string;
-    __initial_auth_token?: string;
-  }
-}
 
 // Initial Sample Seed Data for Instant Usability
 const INITIAL_SEED_CLAIMS: Claim[] = [
@@ -276,12 +241,7 @@ export default function App() {
   // Mode flag: 'cloud' | 'local'
   const [storageMode, setStorageMode] = useState<'cloud' | 'local'>('local');
 
-  // Firebase instances if successfully initialized
-  const [firebaseApp, setFirebaseApp] = useState<FirebaseApp | null>(null);
-  const [authInstance, setAuthInstance] = useState<Auth | null>(null);
-  const [dbInstance, setDbInstance] = useState<Firestore | null>(null);
-
-  // User state (Google Profile - null by default until user clicks Google Login)
+  // User state
   const [user, setUser] = useState<UserProfile | null>(null);
 
   // App Profile/Account Workspace state
@@ -333,13 +293,34 @@ export default function App() {
   const [profileToDelete, setProfileToDelete] = useState<string | null>(null);
   const [editingProfile, setEditingProfile] = useState<{ oldName: string; newName: string } | null>(null);
 
-  const handleSaveEditProfile = (oldName: string) => {
+  const handleSaveEditProfile = async (oldName: string) => {
     if (!editingProfile || !editingProfile.newName.trim()) return;
     const trimmed = editingProfile.newName.trim();
     if (profiles.includes(trimmed) && trimmed !== oldName) {
       showToast("Workspace name already exists", 'error');
       return;
     }
+
+    if (storageMode === 'cloud' && user) {
+      try {
+        await supabase
+          .from('profiles')
+          .update({ name: trimmed })
+          .eq('user_id', user.uid)
+          .eq('name', oldName);
+        
+        // Also update profile name in all claims in cloud
+        await supabase
+          .from('claims')
+          .update({ profile: trimmed })
+          .eq('user_id', user.uid)
+          .eq('profile', oldName);
+
+      } catch (err) {
+        console.warn("Cloud profile rename failed:", err);
+      }
+    }
+
     const updatedProfiles = profiles.map(p => p === oldName ? trimmed : p);
     setProfiles(updatedProfiles);
     try {
@@ -367,7 +348,7 @@ export default function App() {
   const [newCategoryName, setNewCategoryName] = useState('');
   const [editingCategory, setEditingCategory] = useState<{ oldName: string; newName: string } | null>(null);
 
-  const handleAddCategory = (e: React.FormEvent) => {
+  const handleAddCategory = async (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = newCategoryName.trim();
     if (!trimmed) return;
@@ -375,6 +356,18 @@ export default function App() {
       showToast("Category already exists", 'error');
       return;
     }
+
+    if (storageMode === 'cloud' && user) {
+      try {
+        const { error } = await supabase
+          .from('categories')
+          .insert({ name: trimmed, user_id: user.uid });
+        if (error) throw error;
+      } catch (err) {
+        console.warn("Cloud add category failed:", err);
+      }
+    }
+
     const updated = [...categories, trimmed];
     setCategories(updated);
     saveLocalCategories(updated);
@@ -382,13 +375,34 @@ export default function App() {
     showToast(`Added category: ${trimmed}`, 'success');
   };
 
-  const handleSaveEditCategory = (oldName: string) => {
+  const handleSaveEditCategory = async (oldName: string) => {
     if (!editingCategory || !editingCategory.newName.trim()) return;
     const trimmed = editingCategory.newName.trim();
     if (categories.includes(trimmed) && trimmed !== oldName) {
       showToast("Category name already exists", 'error');
       return;
     }
+
+    if (storageMode === 'cloud' && user) {
+      try {
+        await supabase
+          .from('categories')
+          .update({ name: trimmed })
+          .eq('user_id', user.uid)
+          .eq('name', oldName);
+        
+        // Also update category name in all claims in cloud
+        await supabase
+          .from('claims')
+          .update({ category: trimmed })
+          .eq('user_id', user.uid)
+          .eq('category', oldName);
+
+      } catch (err) {
+        console.warn("Cloud category rename failed:", err);
+      }
+    }
+
     const updatedCategories = categories.map(c => c === oldName ? trimmed : c);
     setCategories(updatedCategories);
     saveLocalCategories(updatedCategories);
@@ -416,15 +430,37 @@ export default function App() {
     setCategoryToDelete(catName);
   };
 
-  const handleConfirmDeleteCategory = () => {
+  const handleConfirmDeleteCategory = async () => {
     if (!categoryToDelete) return;
     const catName = categoryToDelete;
     const updated = categories.filter(c => c !== catName);
+    
+    const fallbackCat = updated.includes('Other') ? 'Other' : updated[0] || 'Other';
+
+    if (storageMode === 'cloud' && user) {
+      try {
+        await supabase
+          .from('categories')
+          .delete()
+          .eq('user_id', user.uid)
+          .eq('name', catName);
+        
+        // Update claims to fallback category in cloud
+        await supabase
+          .from('claims')
+          .update({ category: fallbackCat })
+          .eq('user_id', user.uid)
+          .eq('category', catName);
+
+      } catch (err) {
+        console.warn("Cloud category delete failed:", err);
+      }
+    }
+
     setCategories(updated);
     saveLocalCategories(updated);
 
     // Reassign claims with deleted category to 'Other' or first remaining category
-    const fallbackCat = updated.includes('Other') ? 'Other' : updated[0] || 'Other';
     const updatedClaims = claims.map(c => c.category === catName ? { ...c, category: fallbackCat } : c);
     setClaims(updatedClaims);
     saveLocalClaims(updatedClaims);
@@ -449,13 +485,16 @@ export default function App() {
     if (!receiptToDeleteClaim) return;
     const targetId = receiptToDeleteClaim.id;
 
-    if (storageMode === 'cloud' && dbInstance && user) {
+    if (storageMode === 'cloud' && user) {
       try {
-        const appId = window.__app_id || 'claimswift-app';
-        const claimDocRef = doc(dbInstance, 'artifacts', appId, 'claims', targetId);
-        await updateDoc(claimDocRef, { receipt: null, updatedAt: new Date().toISOString() });
+        const { error } = await supabase
+          .from('claims')
+          .update({ receipt: null, updated_at: new Date().toISOString() })
+          .eq('id', targetId);
+        
+        if (error) throw error;
       } catch (err) {
-        console.warn("Cloud remove receipt failed, updating locally:", err);
+        console.warn("Cloud remove receipt failed:", err);
       }
     }
 
@@ -529,152 +568,151 @@ export default function App() {
     localStorage.setItem('claimswift_profiles', JSON.stringify(profiles));
   }, [profiles]);
 
-  // Initial Authentication & Firebase Check
+  // Initial Authentication & Supabase Check
   useEffect(() => {
-    const initFirebase = async () => {
-      let configToUse: any = firebaseConfig;
-      if (typeof window !== 'undefined' && window.__firebase_config) {
-        try {
-          configToUse = JSON.parse(window.__firebase_config);
-        } catch (e) {
-          console.warn("Could not parse __firebase_config:", e);
-        }
-      }
-
-      if (configToUse && configToUse.apiKey && configToUse.apiKey !== 'demo-api-key') {
-        try {
-          const app = getApps().length > 0 ? getApps()[0] : initializeApp(configToUse);
-          const auth = getAuth(app);
-          const db = getFirestore(app, configToUse.firestoreDatabaseId);
-
-          setFirebaseApp(app);
-          setAuthInstance(auth);
-          setDbInstance(db);
-          setStorageMode('cloud');
-          setLoadingClaims(true);
-
-          if (window.__initial_auth_token) {
-            await signInWithCustomToken(auth, window.__initial_auth_token);
-          }
-
-          onAuthStateChanged(auth, (currentUser: FirebaseUser | null) => {
-            if (currentUser) {
-              setUser({
-                uid: currentUser.uid,
-                displayName: currentUser.displayName,
-                email: currentUser.email,
-                photoURL: currentUser.photoURL,
-                isAnonymous: currentUser.isAnonymous
-              });
-            } else {
-              setUser(null);
-            }
-          });
-
-          // Handle Redirect Result
-          try {
-            const result = await getRedirectResult(auth);
-            if (result && result.user) {
-              // User is signed in via redirect
-              setUser({
-                uid: result.user.uid,
-                displayName: result.user.displayName,
-                email: result.user.email,
-                photoURL: result.user.photoURL,
-                isAnonymous: false
-              });
-              showToast(`Successfully logged in via redirect`, 'success');
-            }
-          } catch (error) {
-            console.warn("Redirect result error:", error);
-          }
-
-          const appId = window.__app_id || 'claimswift-app';
-          const claimsColRef = collection(db, 'artifacts', appId, 'claims');
-          
-          onSnapshot(claimsColRef, 
-            (snapshot) => {
-              const fetchedClaims = snapshot.docs.map(docSnap => ({
-                id: docSnap.id,
-                ...docSnap.data()
-              })) as Claim[];
-              setClaims(fetchedClaims.length > 0 ? fetchedClaims : INITIAL_SEED_CLAIMS);
-              setLoadingClaims(false);
-            },
-            (error) => {
-              console.warn("Firestore snapshot error, staying on local store:", error);
-              setLoadingClaims(false);
-            }
-          );
-
-          // Real-time snapshot sync for workspace profiles
-          const profilesColRef = collection(db, 'artifacts', appId, 'profiles');
-          onSnapshot(profilesColRef, (snapshot) => {
-            if (!snapshot.empty) {
-              const fetchedProfiles = snapshot.docs.map(d => d.data().name as string).filter(Boolean);
-              if (fetchedProfiles.length > 0) {
-                setProfiles(fetchedProfiles);
-              }
-            }
-          });
-
-          // Real-time snapshot sync for categories
-          const categoriesColRef = collection(db, 'artifacts', appId, 'categories');
-          onSnapshot(categoriesColRef, (snapshot) => {
-            if (!snapshot.empty) {
-              const fetchedCats = snapshot.docs.map(d => d.data().name as string).filter(Boolean);
-              if (fetchedCats.length > 0) {
-                setCategories(fetchedCats);
-              }
-            }
-          });
-
-          return;
-        } catch (err) {
-          console.warn("Firebase initialization failed, falling back gracefully to LocalStorage mode:", err);
-        }
-      }
-
+    if (!isSupabaseConfigured) {
       setStorageMode('local');
-      setLoadingClaims(false);
+      return;
+    }
+
+    const initSupabase = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (session?.user) {
+        setUser({
+          uid: session.user.id,
+          displayName: session.user.user_metadata.full_name || session.user.email?.split('@')[0] || 'User',
+          email: session.user.email || null,
+          photoURL: session.user.user_metadata.avatar_url || null,
+        });
+        setStorageMode('cloud');
+        fetchCloudData(session.user.id);
+      } else {
+        setStorageMode('local');
+      }
+
+      const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+        if (session?.user) {
+          setUser({
+            uid: session.user.id,
+            displayName: session.user.user_metadata.full_name || session.user.email?.split('@')[0] || 'User',
+            email: session.user.email || null,
+            photoURL: session.user.user_metadata.avatar_url || null,
+          });
+          setStorageMode('cloud');
+          fetchCloudData(session.user.id);
+        } else {
+          setUser(null);
+          setStorageMode('local');
+        }
+      });
+
+      return () => {
+        authListener.subscription.unsubscribe();
+      };
     };
 
-    initFirebase();
+    const fetchCloudData = async (userId: string) => {
+      setLoadingClaims(true);
+      try {
+        // Fetch Claims
+        const { data: fetchedClaims, error: claimsError } = await supabase
+          .from('claims')
+          .select('*')
+          .eq('user_id', userId)
+          .order('date', { ascending: false });
+
+        if (claimsError) throw claimsError;
+        if (fetchedClaims) {
+          setClaims(fetchedClaims.map(c => ({
+            ...c,
+            id: c.id.toString(),
+            createdAt: c.created_at,
+            updatedAt: c.updated_at
+          })));
+        }
+
+        // Fetch Profiles
+        const { data: fetchedProfiles, error: profilesError } = await supabase
+          .from('profiles')
+          .select('name')
+          .eq('user_id', userId);
+        
+        if (profilesError) throw profilesError;
+        if (fetchedProfiles && fetchedProfiles.length > 0) {
+          setProfiles(fetchedProfiles.map(p => p.name));
+        }
+
+        // Fetch Categories
+        const { data: fetchedCats, error: catsError } = await supabase
+          .from('categories')
+          .select('name')
+          .eq('user_id', userId);
+        
+        if (catsError) throw catsError;
+        if (fetchedCats && fetchedCats.length > 0) {
+          setCategories(fetchedCats.map(c => c.name));
+        }
+
+      } catch (err) {
+        console.warn("Supabase fetch error:", err);
+      } finally {
+        setLoadingClaims(false);
+      }
+    };
+
+    initSupabase();
   }, []);
 
   // Google Sign-In Handler
   const handleGoogleSignIn = async () => {
-    if (authInstance) {
-      try {
-        await setPersistence(authInstance, browserLocalPersistence);
-        const provider = new GoogleAuthProvider();
-        // Use redirect instead of popup for better mobile compatibility
-        await signInWithRedirect(authInstance, provider);
-      } catch (error) {
-        console.warn("Google redirect sign-in failed:", error);
-        showToast("Google sign-in failed, please try again.", 'error');
-      }
+    if (!isSupabaseConfigured) {
+      showToast("Supabase is not configured. Please set VITE_SUPABASE_URL and KEY.", 'error');
+      return;
+    }
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: window.location.origin,
+        }
+      });
+      if (error) throw error;
+    } catch (error) {
+      console.warn("Supabase Google sign-in failed:", error);
+      showToast("Google sign-in failed, please try again.", 'error');
     }
   };
 
-  // Google Sign-Out Handler
+  // Sign-Out Handler
   const handleSignOut = async () => {
-    if (authInstance) {
-      try {
-        await signOut(authInstance);
-      } catch (e) {
-        console.error("Firebase signout error:", e);
-      }
+    try {
+      await supabase.auth.signOut();
+      setUser(null);
+      setStorageMode('local');
+      showToast("Signed out successfully", 'info');
+    } catch (e) {
+      console.error("Supabase signout error:", e);
     }
-    setUser(null);
-    showToast("Signed out of Google account", 'info');
   };
 
   // Add profile workspace handler
-  const handleConfirmAddProfile = (e: React.FormEvent) => {
+  const handleConfirmAddProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     if (newProfileName.trim()) {
       const trimmed = newProfileName.trim();
+      
+      if (storageMode === 'cloud' && user) {
+        try {
+          const { error } = await supabase
+            .from('profiles')
+            .insert({ name: trimmed, user_id: user.uid });
+          if (error) throw error;
+        } catch (err) {
+          console.warn("Cloud add profile failed:", err);
+        }
+      }
+
       if (!profiles.includes(trimmed)) {
         setProfiles(prev => [...prev, trimmed]);
       }
@@ -708,17 +746,25 @@ export default function App() {
     setClaims(remainingClaims);
     saveLocalClaims(remainingClaims);
 
-    // If cloud mode, clean up cloud claims for this profile
-    if (storageMode === 'cloud' && dbInstance && user) {
+    // If cloud mode, clean up cloud data for this profile
+    if (storageMode === 'cloud' && user) {
       try {
-        const appId = window.__app_id || 'claimswift-app';
-        const claimsToDelete = claims.filter(c => c.profile === target);
-        for (const c of claimsToDelete) {
-          const docRef = doc(dbInstance, 'artifacts', appId, 'claims', c.id);
-          await deleteDoc(docRef);
-        }
+        // Delete profile record
+        await supabase
+          .from('profiles')
+          .delete()
+          .eq('user_id', user.uid)
+          .eq('name', target);
+        
+        // Delete all claims for this profile
+        await supabase
+          .from('claims')
+          .delete()
+          .eq('user_id', user.uid)
+          .eq('profile', target);
+
       } catch (err) {
-        console.warn("Could not delete cloud claims for deleted profile", err);
+        console.warn("Cloud profile deletion failed:", err);
       }
     }
 
@@ -1151,25 +1197,38 @@ export default function App() {
       updatedAt: new Date().toISOString()
     };
 
-    if (storageMode === 'cloud' && dbInstance && user) {
+    if (storageMode === 'cloud' && user) {
       try {
-        const appId = window.__app_id || 'claimswift-app';
         if (editingClaim) {
-          const claimDocRef = doc(dbInstance, 'artifacts', appId, 'claims', editingClaim.id);
-          await updateDoc(claimDocRef, claimData);
-          showToast("Claim updated in Cloud Firestore", 'success');
+          const { error } = await supabase
+            .from('claims')
+            .update({
+              ...claimData,
+              amount: parseFloat(formAmount) || 0,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', editingClaim.id);
+          
+          if (error) throw error;
+          showToast("Claim updated in Cloud Database", 'success');
         } else {
-          const claimsColRef = collection(dbInstance, 'artifacts', appId, 'claims');
-          await addDoc(claimsColRef, {
-            ...claimData,
-            createdAt: new Date().toISOString()
-          });
-          showToast("New claim logged in Cloud Firestore", 'success');
+          const { error } = await supabase
+            .from('claims')
+            .insert({
+              ...claimData,
+              user_id: user.uid,
+              amount: parseFloat(formAmount) || 0,
+              created_at: new Date().toISOString()
+            });
+          
+          if (error) throw error;
+          showToast("New claim logged in Cloud Database", 'success');
         }
         setIsModalOpen(false);
+        // Refresh local state by refetching would be cleaner, but we can also update locally
         return;
       } catch (err) {
-        console.warn("Could not save to Cloud Firestore, updating locally:", err);
+        console.warn("Could not save to Cloud Database, updating locally:", err);
       }
     }
 
@@ -1196,15 +1255,18 @@ export default function App() {
     if (item.status === 'UNSUBMITTED') nextStatus = 'SUBMITTED';
     else if (item.status === 'SUBMITTED') nextStatus = 'PAID';
     
-    if (storageMode === 'cloud' && dbInstance && user) {
+    if (storageMode === 'cloud' && user) {
       try {
-        const appId = window.__app_id || 'claimswift-app';
-        const claimDocRef = doc(dbInstance, 'artifacts', appId, 'claims', item.id);
-        await updateDoc(claimDocRef, { status: nextStatus, updatedAt: new Date().toISOString() });
+        const { error } = await supabase
+          .from('claims')
+          .update({ status: nextStatus, updated_at: new Date().toISOString() })
+          .eq('id', item.id);
+        
+        if (error) throw error;
         showToast(`Status shifted to ${nextStatus}`, 'info');
         return;
       } catch (err) {
-        console.warn("Status update cloud failed, saving locally:", err);
+        console.warn("Status update cloud failed:", err);
       }
     }
 
@@ -1216,13 +1278,16 @@ export default function App() {
   const handleConfirmDelete = async () => {
     if (!deleteConfirmId) return;
 
-    if (storageMode === 'cloud' && dbInstance && user) {
+    if (storageMode === 'cloud' && user) {
       try {
-        const appId = window.__app_id || 'claimswift-app';
-        const claimDocRef = doc(dbInstance, 'artifacts', appId, 'claims', deleteConfirmId);
-        await deleteDoc(claimDocRef);
+        const { error } = await supabase
+          .from('claims')
+          .delete()
+          .eq('id', deleteConfirmId);
+        
+        if (error) throw error;
       } catch (err) {
-        console.warn("Cloud delete failed, deleting locally:", err);
+        console.warn("Cloud delete failed:", err);
       }
     }
 
@@ -1293,7 +1358,7 @@ export default function App() {
           {/* Top-Right Suite: Google Login/Logout + Dark Mode + New Claim */}
           <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
             {/* Google Authentication & Profile / Logout */}
-            {user && !user.isAnonymous ? (
+            {user ? (
               <div className={`flex items-center space-x-1.5 ${darkMode ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-200'} border rounded-xl pl-2 pr-1.5 py-1 sm:py-1.5 shadow-sm`}>
                 <img 
                   src={user.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(user.displayName || user.email || 'H')}&background=2563eb&color=fff&bold=true`} 
