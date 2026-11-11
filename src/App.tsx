@@ -318,8 +318,9 @@ export default function App() {
           .eq('user_id', user.uid)
           .eq('profile', oldName);
 
-      } catch (err) {
-        console.warn("Cloud profile rename failed:", err);
+      } catch (err: any) {
+        console.error("Cloud profile rename failed:", err);
+        showToast(`Cloud sync failed: ${err.message}`, 'error');
       }
     }
 
@@ -365,8 +366,9 @@ export default function App() {
           .from('categories')
           .insert({ name: trimmed, user_id: user.uid });
         if (error) throw error;
-      } catch (err) {
-        console.warn("Cloud add category failed:", err);
+      } catch (err: any) {
+        console.error("Cloud add category failed:", err);
+        showToast(`Cloud sync failed: ${err.message}`, 'error');
       }
     }
 
@@ -400,8 +402,9 @@ export default function App() {
           .eq('user_id', user.uid)
           .eq('category', oldName);
 
-      } catch (err) {
-        console.warn("Cloud category rename failed:", err);
+      } catch (err: any) {
+        console.error("Cloud category rename failed:", err);
+        showToast(`Cloud sync failed: ${err.message}`, 'error');
       }
     }
 
@@ -454,8 +457,9 @@ export default function App() {
           .eq('user_id', user.uid)
           .eq('category', catName);
 
-      } catch (err) {
-        console.warn("Cloud category delete failed:", err);
+      } catch (err: any) {
+        console.error("Cloud category delete failed:", err);
+        showToast(`Cloud sync failed: ${err.message}`, 'error');
       }
     }
 
@@ -495,8 +499,9 @@ export default function App() {
           .eq('id', targetId);
         
         if (error) throw error;
-      } catch (err) {
-        console.warn("Cloud remove receipt failed:", err);
+      } catch (err: any) {
+        console.error("Cloud remove receipt failed:", err);
+        showToast(`Cloud sync failed: ${err.message}`, 'error');
       }
     }
 
@@ -711,8 +716,9 @@ export default function App() {
             .from('profiles')
             .insert({ name: trimmed, user_id: user.uid });
           if (error) throw error;
-        } catch (err) {
-          console.warn("Cloud add profile failed:", err);
+        } catch (err: any) {
+          console.error("Cloud add profile failed:", err);
+          showToast(`Cloud sync failed: ${err.message}`, 'error');
         }
       }
 
@@ -1197,41 +1203,55 @@ export default function App() {
       status: formStatus,
       notes: formNotes.trim(),
       receipt: formReceiptBase64,
-      updatedAt: new Date().toISOString()
+      updated_at: new Date().toISOString()
     };
 
     if (storageMode === 'cloud' && user) {
       try {
+        // Basic check for base64 size (approx 1.37x raw size)
+        // Free tier Supabase has some limits on request payload (usually 10MB)
+        if (formReceiptBase64 && formReceiptBase64.length > 8000000) {
+           showToast("Receipt photo is too large for cloud sync. Try a smaller photo or screenshot.", 'error');
+        }
+
         if (editingClaim) {
           const { error } = await supabase
             .from('claims')
-            .update({
-              ...claimData,
-              amount: parseFloat(formAmount) || 0,
-              updated_at: new Date().toISOString()
-            })
+            .update(claimData)
             .eq('id', editingClaim.id);
           
           if (error) throw error;
           showToast("Claim updated in Cloud Database", 'success');
+          setClaims(prev => prev.map(c => c.id === editingClaim.id ? { ...c, ...claimData, updatedAt: claimData.updated_at } : c));
         } else {
-          const { error } = await supabase
+          const { data, error } = await supabase
             .from('claims')
             .insert({
               ...claimData,
               user_id: user.uid,
-              amount: parseFloat(formAmount) || 0,
               created_at: new Date().toISOString()
-            });
+            })
+            .select();
           
           if (error) throw error;
           showToast("New claim logged in Cloud Database", 'success');
+          
+          if (data && data[0]) {
+            const newClaim: Claim = {
+              ...data[0],
+              id: data[0].id.toString(),
+              createdAt: data[0].created_at,
+              updatedAt: data[0].updated_at
+            };
+            setClaims(prev => [newClaim, ...prev]);
+          }
         }
         setIsModalOpen(false);
-        // Refresh local state by refetching would be cleaner, but we can also update locally
         return;
-      } catch (err) {
-        console.warn("Could not save to Cloud Database, updating locally:", err);
+      } catch (err: any) {
+        console.error("Cloud save error:", err);
+        showToast(`Cloud save failed: ${err.message || 'Check your database connection'}`, 'error');
+        // Fall through to local save so data isn't lost immediately
       }
     }
 
